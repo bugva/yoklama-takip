@@ -6,12 +6,13 @@ import type { AbsenceRecord, CalendarFilter, Course, ScheduleSlot } from '../typ
 import { MONTH_NAMES, t, WEEKDAY_SHORT } from '../i18n'
 import { isRiskZone, maxAllowedAbsences, absenceCountForCourse, unknownAbsenceCount } from '../logic/limits'
 import { findCourseByName } from '../logic/coursesFromSchedule'
+import { isHoliday } from '../logic/holidays'
 
 type Props = {
   slots: ScheduleSlot[]
   absences: AbsenceRecord[]
   courses: Course[]
-  calendarFilter?: CalendarFilter
+  calendarFilter?: CalendarFilter | null
   onRequestCalendarAbsence: (slot: ScheduleSlot, day: Date) => void
 }
 
@@ -33,7 +34,7 @@ function formatDayTitle(d: Date): string {
   return `${d.getDate()} ${m} ${d.getFullYear()}`
 }
 
-export function MonthlyScheduleView({ slots, absences, courses, calendarFilter = 'all', onRequestCalendarAbsence }: Props) {
+export function MonthlyScheduleView({ slots, absences, courses, calendarFilter = null, onRequestCalendarAbsence }: Props) {
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()))
   const [selected, setSelected] = useState<Date | null>(null)
 
@@ -93,7 +94,7 @@ export function MonthlyScheduleView({ slots, absences, courses, calendarFilter =
               <div className="cal-chips">
                 {list
                   .filter((s) => {
-                    if (calendarFilter === 'all') return true
+                    if (!calendarFilter) return true
                     const state = calendarSlotStateOnDate(absences, s, d, courses)
                     if (calendarFilter === 'risk') {
                       const course = findCourseByName(courses, s.courseName)
@@ -104,7 +105,9 @@ export function MonthlyScheduleView({ slots, absences, courses, calendarFilter =
                       return isRiskZone(used, max, unk)
                     }
                     if (calendarFilter === 'unsure') return state === 'unsure'
+                    if (calendarFilter === 'absent') return state === 'absent'
                     if (calendarFilter === 'cancelled') return state === 'cancelled'
+                    if (calendarFilter === 'holiday') return isHoliday(toLocalYmd(d))
                     return true
                   })
                   .slice(0, 3)

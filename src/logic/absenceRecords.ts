@@ -54,21 +54,19 @@ export function upsertAttendanceForSlotDay(
 ): AbsenceRecord[] {
   if (!rec.slotId || !rec.sessionDate) return [...absences, rec]
   const sameSlotDay = (a: AbsenceRecord) => a.slotId === rec.slotId && a.sessionDate === rec.sessionDate
-  const countedIdx = absences.findIndex((a) => sameSlotDay(a) && a.countTowardsLimit !== false)
-  const nonCountedIdx = absences.findIndex((a) => sameSlotDay(a) && a.countTowardsLimit === false)
 
-  // Devamsızlık sayan bir kayıt gelirse: aynı slot+gün için sayaçta tek kayıt kalsın.
-  if (rec.countTowardsLimit !== false) {
-    if (countedIdx < 0) return [...absences, rec]
-    const next = [...absences]
-    next[countedIdx] = { ...rec, id: next[countedIdx].id }
-    return next
+  // Tek bir ders+gün için tek kayıt tutulur.
+  // Böylece "gitmedim" -> "gittim" veya toplu aksiyonlar eski kaydı doğru şekilde ezer.
+  let existingId: string | null = null
+  const next: AbsenceRecord[] = []
+  for (const item of absences) {
+    if (sameSlotDay(item)) {
+      existingId = item.id
+      continue
+    }
+    next.push(item)
   }
 
-  // Saymayan bir kayıt gelirse (gittim/iptal):
-  // mevcut devamsızlık kaydını silme; sadece non-count status'u güncelle/ekle.
-  if (nonCountedIdx < 0) return [...absences, rec]
-  const next = [...absences]
-  next[nonCountedIdx] = { ...rec, id: next[nonCountedIdx].id }
+  next.push(existingId ? { ...rec, id: existingId } : rec)
   return next
 }

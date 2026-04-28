@@ -89,8 +89,16 @@ function countSlotsForCourse(
   courseName: string,
 ): { recurring: ScheduleSlot[]; oneOff: ScheduleSlot[] } {
   const matching = slots.filter((s) => s.courseName === courseName)
-  const recurring = matching.filter((s) => !s.isExtra || s.extraRecurring)
-  const oneOff = matching.filter((s) => s.isExtra && !s.extraRecurring)
+  const recurring = matching.filter((s) => {
+    if (!s.isExtra) return true
+    const repeat = s.extraRepeat ?? (s.extraRecurring ? 'weekly' : 'none')
+    return repeat === 'weekly' || repeat === 'biweekly'
+  })
+  const oneOff = matching.filter((s) => {
+    if (!s.isExtra) return false
+    const repeat = s.extraRepeat ?? (s.extraRecurring ? 'weekly' : 'none')
+    return repeat === 'none'
+  })
   return { recurring, oneOff }
 }
 

@@ -16,7 +16,11 @@ function overlaps(a: ScheduleSlot, b: ScheduleSlot): boolean {
 }
 
 export function findConflicts(slots: ScheduleSlot[]): SlotConflict[] {
-  const recurring = slots.filter((s) => !s.isExtra || s.extraRecurring)
+  const recurring = slots.filter((s) => {
+    if (!s.isExtra) return true
+    const repeat = s.extraRepeat ?? (s.extraRecurring ? 'weekly' : 'none')
+    return repeat === 'weekly' || repeat === 'biweekly'
+  })
   const conflicts: SlotConflict[] = []
   for (let i = 0; i < recurring.length; i++) {
     for (let j = i + 1; j < recurring.length; j++) {

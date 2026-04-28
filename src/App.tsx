@@ -5,12 +5,14 @@ import { ScheduleWizard } from './components/ScheduleWizard'
 import { CourseRulesWizard } from './components/CourseRulesWizard'
 import { SemesterDatePicker } from './components/SemesterDatePicker'
 import { Dashboard } from './components/Dashboard'
+import { OnboardingExtrasPanel } from './components/OnboardingExtrasPanel'
 import { t } from './i18n'
 import './app.css'
 
 type Phase =
   | { id: 'onboard-schedule' }
   | { id: 'onboard-rules'; slots: AppData['scheduleSlots'] }
+  | { id: 'onboard-extras'; slots: AppData['scheduleSlots']; courses: Course[] }
   | { id: 'onboard-semester'; slots: AppData['scheduleSlots']; courses: Course[] }
   | { id: 'home'; data: AppData }
   | { id: 'edit-schedule'; data: AppData }
@@ -22,6 +24,7 @@ function migrateSlots(raw: AppData): AppData {
     ...s,
     isExtra: Boolean(s.isExtra),
     extraRecurring: s.isExtra ? Boolean(s.extraRecurring) : true,
+    extraRepeat: s.isExtra ? (s.extraRepeat ?? (s.extraRecurring ? 'weekly' : 'none')) : undefined,
     extraAttendanceTracked: Boolean(s.extraAttendanceTracked),
   }))
   return { ...raw, scheduleSlots }
@@ -54,8 +57,18 @@ export default function App() {
         slots={phase.slots}
         initialCourses={[]}
         onComplete={(courses) => {
-          setPhase({ id: 'onboard-semester', slots: phase.slots, courses })
+          setPhase({ id: 'onboard-extras', slots: phase.slots, courses })
         }}
+      />
+    )
+  }
+
+  if (phase.id === 'onboard-extras') {
+    return (
+      <OnboardingExtrasPanel
+        initialSlots={phase.slots}
+        onComplete={(slots) => setPhase({ id: 'onboard-semester', slots, courses: phase.courses })}
+        onSkip={() => setPhase({ id: 'onboard-semester', slots: phase.slots, courses: phase.courses })}
       />
     )
   }

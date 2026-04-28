@@ -11,6 +11,48 @@ type Props = {
   semesterEnd?: string
 }
 
+function KpiCard({ label, value, tone }: { label: string; value: string; tone?: 'primary' | 'success' | 'danger' | 'warning' }) {
+  return (
+    <div className={`report-kpi-card${tone ? ` tone-${tone}` : ''}`}>
+      <span className="report-kpi-label">{label}</span>
+      <strong className="report-kpi-value">{value}</strong>
+    </div>
+  )
+}
+
+function DistributionBars({
+  absent,
+  unsure,
+  present,
+  cancelled,
+}: {
+  absent: number
+  unsure: number
+  present: number
+  cancelled: number
+}) {
+  const total = Math.max(1, absent + unsure + present + cancelled)
+  const items = [
+    { cls: 'seg-absent', value: absent },
+    { cls: 'seg-unsure', value: unsure },
+    { cls: 'seg-present', value: present },
+    { cls: 'seg-cancelled', value: cancelled },
+  ]
+  return (
+    <div className="report-mix">
+      {items.map((item) => (
+        <div key={item.cls} className="report-mix-col">
+          <div
+            className={`report-mix-bar ${item.cls}`}
+            style={{ height: `${Math.max(8, (item.value / total) * 100)}%` }}
+            title={`${item.value}`}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TrendChart({ data }: { data: WeeklyTrend[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -36,14 +78,17 @@ function TrendChart({ data }: { data: WeeklyTrend[] }) {
     const offsetX = Math.max(0, (w - totalBarArea) / 2)
     const chartH = h - 32
 
+    const styles = getComputedStyle(document.documentElement)
+    const muted = styles.getPropertyValue('--muted').trim() || '#636366'
+
     for (let i = 0; i < data.length; i++) {
       const d = data[i]
       const x = offsetX + i * (barW + gap)
       const stack = [
-        { val: d.absent, color: 'rgba(248, 113, 113, 0.85)' },
-        { val: d.unsure, color: 'rgba(251, 191, 36, 0.85)' },
-        { val: d.present, color: 'rgba(52, 211, 153, 0.85)' },
-        { val: d.cancelled, color: 'rgba(148, 163, 184, 0.6)' },
+        { val: d.absent, color: 'rgba(255, 69, 58, 0.85)' },
+        { val: d.unsure, color: 'rgba(255, 159, 10, 0.85)' },
+        { val: d.present, color: 'rgba(48, 209, 88, 0.85)' },
+        { val: d.cancelled, color: 'rgba(142, 142, 147, 0.6)' },
       ]
       let y = chartH
       for (const s of stack) {
@@ -55,7 +100,7 @@ function TrendChart({ data }: { data: WeeklyTrend[] }) {
         ctx.fill()
         y -= segH
       }
-      ctx.fillStyle = '#7c869e'
+      ctx.fillStyle = muted
       ctx.font = '9px Inter, system-ui, sans-serif'
       ctx.textAlign = 'center'
       const label = d.weekLabel.replace(/^\d{4}-/, '')
@@ -108,14 +153,17 @@ function DonutChart({ rate }: { rate: number }) {
     const radius = size / 2 - 6
     const lineWidth = 8
 
+    const styles = getComputedStyle(document.documentElement)
+    const trackColor = styles.getPropertyValue('--border-strong').trim() || 'rgba(255,255,255,0.1)'
+
     ctx.beginPath()
     ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+    ctx.strokeStyle = trackColor
     ctx.lineWidth = lineWidth
     ctx.stroke()
 
     const angle = (rate / 100) * Math.PI * 2
-    const color = rate >= 80 ? '#34d399' : rate >= 50 ? '#fbbf24' : '#f87171'
+    const color = rate >= 80 ? '#30d158' : rate >= 50 ? '#ff9f0a' : '#ff453a'
     ctx.beginPath()
     ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + angle)
     ctx.strokeStyle = color
@@ -269,9 +317,49 @@ export function ReportView({ courses, absences, slots, semesterStart, semesterEn
     return courseDetailStats(detailCourse, absences, slots, semesterStart, semesterEnd)
   }, [detailCourse, absences, slots, semesterStart, semesterEnd])
 
+  const summary = useMemo(() => {
+    const absent = reports.reduce((acc, r) => acc + r.absent, 0)
+    const unsure = reports.reduce((acc, r) => acc + r.unsure, 0)
+    const present = reports.reduce((acc, r) => acc + r.present, 0)
+    const cancelled = reports.reduce((acc, r) => acc + r.cancelled, 0)
+    const total = absent + unsure + present + cancelled
+    const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 0
+    const riskCount = reports.filter((r) => r.risk).length
+    return { absent, unsure, present, cancelled, total, attendanceRate, riskCount }
+  }, [reports])
+
   return (
     <section className="card report-card">
       <h2>{t('report.title')}</h2>
+
+      <div className="report-kpi-grid">
+        <KpiCard label={t('report.present')} value={`${summary.attendanceRate}%`} tone="success" />
+        <KpiCard label={t('report.absent')} value={`${summary.absent + summary.unsure}`} tone="danger" />
+        <KpiCard label="Toplam Kayıt" value={`${summary.total}`} tone="primary" />
+        <KpiCard label="Riskli Ders" value={`${summary.riskCount}`} tone={summary.riskCount > 0 ? 'warning' : 'success'} />
+      </div>
+
+      <div className="report-viz-grid">
+        <div className="report-panel">
+          <h3>{t('report.trendTitle')}</h3>
+          <TrendChart data={trends} />
+        </div>
+        <div className="report-panel">
+          <h3>Durum Dağılımı</h3>
+          <DistributionBars
+            absent={summary.absent}
+            unsure={summary.unsure}
+            present={summary.present}
+            cancelled={summary.cancelled}
+          />
+          <div className="report-legend compact">
+            <span className="legend-dot seg-absent" /> {summary.absent}
+            <span className="legend-dot seg-unsure" /> {summary.unsure}
+            <span className="legend-dot seg-present" /> {summary.present}
+            <span className="legend-dot seg-cancelled" /> {summary.cancelled}
+          </div>
+        </div>
+      </div>
 
       <div className="report-legend">
         <span className="legend-dot seg-absent" /> {t('report.absent')}
@@ -319,7 +407,6 @@ export function ReportView({ courses, absences, slots, semesterStart, semesterEn
         </ul>
       )}
 
-      <h3>{t('report.trendTitle')}</h3>
       <select
         className="input"
         value={selectedCourseId}
@@ -334,7 +421,6 @@ export function ReportView({ courses, absences, slots, semesterStart, semesterEn
             </option>
           ))}
       </select>
-      <TrendChart data={trends} />
 
       {detailStats && (
         <DetailModal stats={detailStats} onClose={() => setDetailCourse(null)} />

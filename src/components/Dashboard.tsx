@@ -14,12 +14,15 @@ import {
 import { AddExtraLessonModal } from './AddExtraLessonModal'
 import { t, type MsgKey } from '../i18n'
 import { findCourseByName } from '../logic/coursesFromSchedule'
-import { absencesForCourse, sortAbsencesByRecordedDesc, upsertAttendanceForSlotDay } from '../logic/absenceRecords'
+import { upsertAttendanceForSlotDay } from '../logic/absenceRecords'
 import { pickClassPromptSlot, readClassPromptAnswer, writeClassPromptAnswer } from '../logic/classPrompt'
 import { minutesSinceMidnight, toLocalYmd } from '../logic/dateUtils'
 import { ReportView } from './ReportView'
 import { findConflicts } from '../logic/conflicts'
 import { todayHoliday } from '../logic/holidays'
+import { triggerHaptic, scaleBounce, particleBurst } from '../lib/haptics'
+import { useTheme } from '../lib/useTheme'
+import { motion } from 'framer-motion'
 
 type Props = {
   data: AppData
@@ -29,26 +32,20 @@ type Props = {
   onEditSemester: () => void
 }
 
-function formatRecordedAt(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })
-  } catch {
-    return iso
-  }
-}
-
-function sourceLabel(source: AbsenceSource | undefined): string {
-  const key = `absence.source.${source ?? 'quick'}` as MsgKey
-  return t(key)
-}
-
 export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEditSemester }: Props) {
   const [view, setView] = useState<ProgramView>('today')
   const [weekOffset, setWeekOffset] = useState(0)
   const [shortcutHandled, setShortcutHandled] = useState(false)
+  const [isScrolled, setIsScrolled] = useState(false)
+  const { theme, setTheme } = useTheme()
+
+  useEffect(() => {
+    const handleScroll = () => setIsScrolled(window.scrollY > 40)
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
   const [showExtra, setShowExtra] = useState(false)
   const [clock, setClock] = useState(() => new Date())
-  const [detailCourseId, setDetailCourseId] = useState<string | null>(null)
   const [todayModalSlot, setTodayModalSlot] = useState<ScheduleSlot | null>(null)
   const [calModal, setCalModal] = useState<{
     slot: ScheduleSlot
@@ -56,7 +53,8 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     source: 'calendar_week' | 'calendar_month'
   } | null>(null)
   const [calNote, setCalNote] = useState('')
-  const [calendarFilter, setCalendarFilter] = useState<CalendarFilter>('all')
+  const [calendarFilter, setCalendarFilter] = useState<CalendarFilter | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
   const [holidayDismissed, setHolidayDismissed] = useState(false)
   const [reminders, setReminders] = useState<string[]>([])
 
@@ -214,23 +212,6 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     return true
   }
 
-  function undoLastAbsence(courseId: string) {
-    const rev = [...data.absences].reverse()
-    const last = rev.find((a) => a.courseId === courseId)
-    if (!last) return
-    onUpdateData({
-      ...data,
-      absences: data.absences.filter((a) => a.id !== last.id),
-    })
-  }
-
-  function deleteAbsenceById(id: string) {
-    onUpdateData({
-      ...data,
-      absences: data.absences.filter((a) => a.id !== id),
-    })
-  }
-
   function onExtraSave(slot: ScheduleSlot, newCourse?: Course) {
     let courses = [...data.courses]
     if (newCourse && !courses.some((c) => c.name.trim().toLowerCase() === newCourse.name.trim().toLowerCase())) {
@@ -316,8 +297,11 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     setCalModal(null)
   }
 
-  function onClassPromptPresent() {
+  function onClassPromptPresent(e: React.MouseEvent<HTMLButtonElement>) {
     if (!classPrompt) return
+    scaleBounce(e.currentTarget)
+    particleBurst(e.currentTarget, 'var(--success)')
+    triggerHaptic('medium')
     if (
       trySetAttendance({
         courseId: classPrompt.courseId,
@@ -332,8 +316,10 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     }
   }
 
-  function onClassPromptAbsent() {
+  function onClassPromptAbsent(e: React.MouseEvent<HTMLButtonElement>) {
     if (!classPrompt) return
+    scaleBounce(e.currentTarget)
+    triggerHaptic('heavy')
     if (
       trySetAttendance({
         courseId: classPrompt.courseId,
@@ -396,16 +382,74 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     }
   }
 
-  const detailCourse = detailCourseId ? data.courses.find((c) => c.id === detailCourseId) : undefined
-  const detailList = detailCourseId
-    ? sortAbsencesByRecordedDesc(absencesForCourse(data.absences, detailCourseId))
-    : []
+  function setTodayBulk(state: 'present' | 'absent') {
+    const ymd = toLocalYmd(clock)
+    let nextAbsences = [...data.absences]
+    let changed = 0
+    for (const slot of todaySlots) {
+      const course = findCourseByName(data.courses, slot.courseName)
+      if (!course?.attendanceRequired) continue
+      const rec: AbsenceRecord = {
+        id: crypto.randomUUID(),
+        courseId: course.id,
+        recordedAt: new Date().toISOString(),
+        sessionDate: ymd,
+        slotId: slot.id,
+        source: 'quick',
+        attendanceState: state,
+        countTowardsLimit: state === 'absent',
+      }
+      nextAbsences = upsertAttendanceForSlotDay(nextAbsences, rec)
+      writeClassPromptAnswer(slot.id, clock, state)
+      changed += 1
+    }
+    if (changed > 0) {
+      onUpdateData({ ...data, absences: nextAbsences })
+      setClock(new Date())
+    }
+  }
+
+  function handleTabChange(v: ProgramView) {
+    triggerHaptic('light')
+    setView(v)
+  }
 
   return (
     <div className="screen home">
-      <header className="top-bar">
-        <h1>{t('dashboard.title')}</h1>
-        <ProgramViewToggle value={view} onChange={setView} />
+      <header className={`top-bar ${isScrolled ? 'scrolled' : ''}`}>
+        <div className="top-bar-inner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <motion.h1 
+            layout 
+            style={{ 
+              fontSize: isScrolled ? '1.2rem' : '2rem',
+              margin: isScrolled ? '0' : '0 0 6px 0',
+              fontWeight: 800 
+            }}
+          >
+            {t('dashboard.title')}
+          </motion.h1>
+          <label
+            className="switch"
+            onClick={(e) => {
+              scaleBounce(e.currentTarget as HTMLElement)
+              triggerHaptic('light')
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={theme === 'light'}
+              onChange={(e) => setTheme(e.target.checked ? 'light' : 'dark')}
+              aria-label="Tema degistir"
+            />
+            <span className="slider">
+              <span className="star star_1" />
+              <span className="star star_2" />
+              <span className="star star_3" />
+              <span className="cloud" />
+            </span>
+          </label>
+        </div>
+        <ProgramViewToggle value={view} onChange={handleTabChange} />
       </header>
 
       {reminders.length > 0 && (
@@ -466,10 +510,10 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
             })}
           </p>
           <div className="banner-class-actions">
-            <button type="button" className="btn secondary sm" onClick={onClassPromptPresent}>
+            <button type="button" className="btn secondary sm" onClick={(e) => onClassPromptPresent(e)}>
               {t('absence.classPromptYes')}
             </button>
-            <button type="button" className="btn primary sm" onClick={onClassPromptAbsent}>
+            <button type="button" className="btn primary sm" onClick={(e) => onClassPromptAbsent(e)}>
               {t('absence.classPromptNo')}
             </button>
             <button type="button" className="btn text sm" onClick={onClassPromptLater}>
@@ -480,8 +524,22 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       )}
 
       {view === 'today' && (
-        <section className="card">
-          <h2>{t('dashboard.todayTitle')}</h2>
+        <section className="card card-today">
+          <div className="today-head">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <h2>{t('dashboard.todayTitle')}</h2>
+            </div>
+            {todaySlots.length > 0 && (
+              <div className="today-bulk-actions">
+                <button type="button" className="today-bulk-btn today-bulk-present" onClick={() => setTodayBulk('present')}>
+                  {t('dashboard.todayBulkPresent')}
+                </button>
+                <button type="button" className="today-bulk-btn today-bulk-absent" onClick={() => setTodayBulk('absent')}>
+                  {t('dashboard.todayBulkAbsent')}
+                </button>
+              </div>
+            )}
+          </div>
           {todaySlots.length === 0 ? (
             <p className="muted">{t('dashboard.todayEmpty')}</p>
           ) : (
@@ -501,34 +559,48 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
                       ? 'today-card-past'
                       : ''
                 return (
-                  <button
+                  <motion.button
+                    layoutId={`card-${s.id}`}
+                    transition={{ type: 'spring', stiffness: 120, damping: 25, mass: 1 }}
                     key={s.id}
                     type="button"
                     className={`today-card ${stateClass}`}
-                    onClick={() => setTodayModalSlot(s)}
+                    onClick={(e) => {
+                      scaleBounce(e.currentTarget)
+                      triggerHaptic('light')
+                      setTodayModalSlot(s)
+                    }}
                   >
-                    <div className="today-card-top">
-                      <span className="today-course-name">{s.courseName}</span>
-                      {s.isExtra && <span className="badge sm">{t('schedule.badgeExtra')}</span>}
-                    </div>
-                    <span className="today-time">{s.startTime}–{s.endTime}</span>
-                    {isActive && !answer && <span className="today-live-dot" />}
-                    <div className="today-card-bottom">
-                      {answer ? (
-                        <span className={`today-state-pill pill-${answer}`}>
-                          {t(`absence.todayState.${answer}` as MsgKey)}
+                    <span className="today-card-sheen" aria-hidden />
+                    <div className="today-card-core">
+                      <div className="today-title-row">
+                        <span className="today-course-name">{s.courseName}</span>
+                        {s.isExtra ? <span className="today-mini-badge">{t('schedule.badgeExtra')}</span> : null}
+                      </div>
+                      <span className="today-time-range">{s.startTime}–{s.endTime}</span>
+                      {s.isExtra ? (
+                        <span className="today-extra-hint">
+                          {(s.extraRepeat ?? (s.extraRecurring ? 'weekly' : 'none')) === 'weekly'
+                            ? t('dashboard.extraWeekly')
+                            : (s.extraRepeat ?? (s.extraRecurring ? 'weekly' : 'none')) === 'biweekly'
+                              ? t('dashboard.extraBiweekly')
+                              : `${t('dashboard.extraOnce')} ${s.occurrenceDate}`}
+                          {s.extraAttendanceTracked ? ` · ${t('dashboard.extraTracked')}` : ''}
                         </span>
-                      ) : (
-                        <span className="today-tap-hint">{t('absence.todayTapToSet')}</span>
-                      )}
+                      ) : null}
                     </div>
-                    {s.isExtra && (
-                      <span className="today-extra-info">
-                        {s.extraRecurring ? t('dashboard.extraWeekly') : `${t('dashboard.extraOnce')} ${s.occurrenceDate}`}
-                        {s.extraAttendanceTracked ? ` · ${t('dashboard.extraTracked')}` : ''}
-                      </span>
-                    )}
-                  </button>
+                    <div className="today-card-trail">
+                      {answer ? (
+                        <span className={`today-state-pill pill-${answer}`}>{t(`absence.todayState.${answer}` as MsgKey)}</span>
+                      ) : (
+                        <span className="today-tap-hint today-tap-inline">{t('absence.todayTapToSet')}</span>
+                      )}
+                      {isActive && !answer ? <span className="today-pulse-dot" /> : null}
+                    </div>
+                    <span className="today-chevron" aria-hidden>
+                      ›
+                    </span>
+                  </motion.button>
                 )
               })}
             </div>
@@ -537,18 +609,31 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       )}
 
       {(view === 'week' || view === 'month') && (
-        <div className="filter-bar">
-          {(['all', 'risk', 'unsure', 'cancelled'] as CalendarFilter[]).map((f) => (
+        <>
+          <div className="filter-bar">
             <button
-              key={f}
               type="button"
-              className={`btn sm ${calendarFilter === f ? 'primary' : 'secondary'}`}
-              onClick={() => setCalendarFilter(f)}
+              className={`btn sm ${showFilters ? 'primary' : 'secondary'}`}
+              onClick={() => setShowFilters((prev) => !prev)}
             >
-              {t(`filter.${f}` as MsgKey)}
+              {t('filter.toggle')}
             </button>
-          ))}
-        </div>
+          </div>
+          {showFilters && (
+            <div className="filter-bar">
+              {(['absent', 'unsure', 'risk', 'cancelled', 'holiday'] as CalendarFilter[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`btn sm filter-chip ${calendarFilter === f ? 'active' : ''}`}
+                  onClick={() => setCalendarFilter((prev) => (prev === f ? null : f))}
+                >
+                  {t(`filter.${f}` as MsgKey)}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {view === 'week' && (
@@ -578,67 +663,67 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
 
       {view === 'report' && <ReportView courses={data.courses} absences={data.absences} slots={data.scheduleSlots} semesterStart={data.semesterStart} semesterEnd={data.semesterEnd} />}
 
-      <section className="card">
-        <h2>{t('dashboard.absenceTitle')}</h2>
-        {trackableCourses.length === 0 ? (
-          <p className="muted">{t('dashboard.absenceEmpty')}</p>
-        ) : (
-          <>
-            <ul className="course-stats">
-              {trackableCourses.map((c) => {
-                const used = absenceCountForCourse(c.id, data.absences)
-                const max = maxAllowedAbsences(c)
-                const unk = unknownAbsenceCount(c.id, data.absences)
-                const pct = max != null && max > 0 ? Math.min(100, (used / max) * 100) : null
-                const barClass =
-                  pct == null ? '' : pct < 60 ? 'progress-safe' : pct < 85 ? 'progress-warn' : 'progress-danger'
-                const risk = isRiskZone(used, max, unk)
-                return (
-                  <li key={c.id} className={`stat-row ${risk ? 'stat-row-risk' : ''}`}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <strong>{c.name}</strong>
-                      <div className="muted small">
-                        {max == null
-                          ? t('dashboard.statNoLimit', { used })
-                          : t('dashboard.statLimit', { used, max })}
-                        {unk > 0 ? ` · ${t('dashboard.statUnknown', { unk })}` : ''}
-                      </div>
-                      {pct != null && (
-                        <div className="progress-wrap">
-                          <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="stat-actions">
-                      <button type="button" className="btn text" onClick={() => setDetailCourseId(c.id)}>
-                        {t('absence.detailOpen')}
-                      </button>
-                      <button type="button" className="btn text" onClick={() => undoLastAbsence(c.id)}>
-                        {t('dashboard.undoLast')}
-                      </button>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          </>
-        )}
-      </section>
+      {view === 'settings' && (
+        <section className="card settings-view">
+          <h2>{t('settings.title')}</h2>
+          <p className="muted small">{t('settings.lead')}</p>
+          <div className="settings-actions">
+            <button type="button" className="btn secondary" onClick={() => setShowExtra(true)}>
+              {t('dashboard.addExtra')}
+            </button>
+            <button type="button" className="btn secondary" onClick={onEditProgram}>
+              {t('dashboard.editProgram')}
+            </button>
+            <button type="button" className="btn secondary" onClick={onEditRules}>
+              {t('dashboard.editRules')}
+            </button>
+            <button type="button" className="btn secondary" onClick={onEditSemester}>
+              {t('dashboard.editSemester')}
+            </button>
+          </div>
+        </section>
+      )}
 
-      <div className="btn-row wrap">
-        <button type="button" className="btn secondary" onClick={() => setShowExtra(true)}>
-          {t('dashboard.addExtra')}
-        </button>
-        <button type="button" className="btn secondary" onClick={onEditProgram}>
-          {t('dashboard.editProgram')}
-        </button>
-        <button type="button" className="btn secondary" onClick={onEditRules}>
-          {t('dashboard.editRules')}
-        </button>
-        <button type="button" className="btn secondary" onClick={onEditSemester}>
-          {t('dashboard.editSemester')}
-        </button>
-      </div>
+      {view !== 'settings' && (
+        <section className="card">
+          <h2>{t('dashboard.absenceTitle')}</h2>
+          {trackableCourses.length === 0 ? (
+            <p className="muted">{t('dashboard.absenceEmpty')}</p>
+          ) : (
+            <>
+              <ul className="course-stats">
+                {trackableCourses.map((c) => {
+                  const used = absenceCountForCourse(c.id, data.absences)
+                  const max = maxAllowedAbsences(c)
+                  const unk = unknownAbsenceCount(c.id, data.absences)
+                  const pct = max != null && max > 0 ? Math.min(100, (used / max) * 100) : null
+                  const barClass =
+                    pct == null ? '' : pct < 60 ? 'progress-safe' : pct < 85 ? 'progress-warn' : 'progress-danger'
+                  const risk = isRiskZone(used, max, unk)
+                  return (
+                    <li key={c.id} className={`stat-row ${risk ? 'stat-row-risk' : ''}`}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <strong>{c.name}</strong>
+                        <div className="muted small">
+                          {max == null
+                            ? t('dashboard.statNoLimit', { used })
+                            : t('dashboard.statLimit', { used, max })}
+                          {unk > 0 ? ` · ${t('dashboard.statUnknown', { unk })}` : ''}
+                        </div>
+                        {pct != null && (
+                          <div className="progress-wrap">
+                            <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
 
       {showExtra && (
         <AddExtraLessonModal courses={data.courses} onClose={() => setShowExtra(false)} onSave={onExtraSave} />
@@ -704,41 +789,6 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
         </div>
       )}
 
-      {detailCourse && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setDetailCourseId(null)}>
-          <div className="modal sheet day-sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
-            <h2>{t('absence.detailTitle', { name: detailCourse.name })}</h2>
-            {detailList.length === 0 ? (
-              <p className="muted">{t('absence.detailEmpty')}</p>
-            ) : (
-              <ul className="detail-absence-list">
-                {detailList.map((r) => (
-                  <li key={r.id} className="detail-absence-row">
-                    <div>
-                      <div className="small">
-                        <strong>{formatRecordedAt(r.recordedAt)}</strong>
-                        {r.dateUnknown ? (
-                          <span className="badge sm">{t('absence.dateUnknownBadge')}</span>
-                        ) : r.sessionDate ? (
-                          <span className="muted"> · {r.sessionDate}</span>
-                        ) : null}
-                      </div>
-                      <div className="muted small">{sourceLabel(r.source)}</div>
-                      {r.note && <div className="muted small note-text">📝 {r.note}</div>}
-                    </div>
-                    <button type="button" className="btn text danger" onClick={() => deleteAbsenceById(r.id)}>
-                      {t('absence.deleteRow')}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <button type="button" className="btn primary wide" onClick={() => setDetailCourseId(null)}>
-              {t('month.close')}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

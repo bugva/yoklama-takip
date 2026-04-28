@@ -5,7 +5,7 @@ import type { AbsenceRecord, CalendarFilter, Course, ScheduleSlot } from '../typ
 import { t, WEEKDAY_SHORT } from '../i18n'
 import { isRiskZone, maxAllowedAbsences, absenceCountForCourse, unknownAbsenceCount } from '../logic/limits'
 import { findCourseByName } from '../logic/coursesFromSchedule'
-import { stateIcon } from '../logic/a11y'
+import { isHoliday } from '../logic/holidays'
 
 type Props = {
   anchorDate: Date
@@ -14,7 +14,7 @@ type Props = {
   slots: ScheduleSlot[]
   absences: AbsenceRecord[]
   courses: Course[]
-  calendarFilter?: CalendarFilter
+  calendarFilter?: CalendarFilter | null
   onRequestCalendarAbsence: (slot: ScheduleSlot, calendarDate: Date) => void
 }
 
@@ -25,24 +25,30 @@ export function WeeklyScheduleView({
   slots,
   absences,
   courses,
-  calendarFilter = 'all',
+  calendarFilter = null,
   onRequestCalendarAbsence,
 }: Props) {
   const days = slotsByWeekDays(slots, anchorDate, weekOffset)
   const labels = WEEKDAY_SHORT
   const todayYmd = toLocalYmd(new Date())
+  const weekLabel =
+    weekOffset === 0
+      ? t('week.thisShort')
+      : weekOffset < 0
+        ? t('week.offsetPast', { n: Math.abs(weekOffset) })
+        : t('week.offsetFuture', { n: weekOffset })
 
   return (
     <div className="week-wrap">
-      <div className="week-nav">
-        <button type="button" className="btn secondary" onClick={() => onWeekOffset(weekOffset - 1)}>
-          {t('week.prev')}
+      <div className="week-nav week-nav-minimal">
+        <button type="button" className="btn text week-nav-btn" onClick={() => onWeekOffset(weekOffset - 1)}>
+          ‹
         </button>
-        <button type="button" className="btn text" onClick={() => onWeekOffset(0)}>
-          {t('week.this')}
+        <button type="button" className="btn secondary week-nav-center" onClick={() => onWeekOffset(0)}>
+          {weekLabel}
         </button>
-        <button type="button" className="btn secondary" onClick={() => onWeekOffset(weekOffset + 1)}>
-          {t('week.next')}
+        <button type="button" className="btn text week-nav-btn" onClick={() => onWeekOffset(weekOffset + 1)}>
+          ›
         </button>
       </div>
       <div className="week-days">
@@ -61,7 +67,7 @@ export function WeeklyScheduleView({
                 {daySlots.map((s) => {
                   const state = calendarSlotStateOnDate(absences, s, date, courses)
                   const isFuture = toLocalYmd(date) > todayYmd
-                  if (calendarFilter !== 'all') {
+                  if (calendarFilter) {
                     const course = findCourseByName(courses, s.courseName)
                     if (calendarFilter === 'risk' && course) {
                       const max = maxAllowedAbsences(course)
@@ -70,7 +76,9 @@ export function WeeklyScheduleView({
                       if (!isRiskZone(used, max, unk)) return null
                     }
                     if (calendarFilter === 'unsure' && state !== 'unsure') return null
+                    if (calendarFilter === 'absent' && state !== 'absent') return null
                     if (calendarFilter === 'cancelled' && state !== 'cancelled') return null
+                    if (calendarFilter === 'holiday' && !isHoliday(toLocalYmd(date))) return null
                   }
                   return (
                     <li key={`${s.id}-${toLocalKey(date)}`} className="mini-slot">
@@ -84,8 +92,8 @@ export function WeeklyScheduleView({
                           time: s.startTime,
                         })}
                       >
-                        {state && <span className="state-icon" aria-hidden="true">{stateIcon(state)}</span>}
-                        <span className="time">{s.startTime}</span> {s.courseName}
+                        <span className="time">{s.startTime}</span>
+                        <span className="course">{s.courseName}</span>
                         {s.isExtra ? <span className="badge sm">{t('schedule.badgeExtra')}</span> : null}
                       </button>
                     </li>

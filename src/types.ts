@@ -19,6 +19,8 @@ export type ScheduleSlot = {
   isExtra: boolean
   /** Ek ders: her hafta aynı gün/saat tekrarlansın mı? Tek seferlikte false */
   extraRecurring: boolean
+  /** Ek ders tekrar tipi */
+  extraRepeat?: 'none' | 'weekly' | 'biweekly'
   /** Tek seferlik ek ders için yerel tarih YYYY-MM-DD */
   occurrenceDate?: string
   /** Ek derste yoklama takibi yapılsın mı */
@@ -54,7 +56,7 @@ export type AbsenceRecord = {
   note?: string
 }
 
-export type CalendarFilter = 'all' | 'risk' | 'unsure' | 'cancelled'
+export type CalendarFilter = 'risk' | 'unsure' | 'absent' | 'cancelled' | 'holiday'
 
 export type AppData = {
   version: 2
@@ -67,4 +69,4 @@ export type AppData = {
   semesterEnd?: string
 }
 
-export type ProgramView = 'today' | 'week' | 'month' | 'report'
+export type ProgramView = 'today' | 'week' | 'month' | 'report' | 'settings'
