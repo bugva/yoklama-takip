@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Course, ScheduleSlot } from '../types'
 import { uniqueCourseNamesForRules } from '../logic/coursesFromSchedule'
 import { t } from '../i18n'
+import { LanguageToggle } from './LanguageToggle'
 
 type Props = {
   slots: ScheduleSlot[]
@@ -76,6 +77,9 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
   if (names.length === 0) {
     return (
       <div className="screen">
+        <div className="screen-top-bar">
+          <LanguageToggle />
+        </div>
         <p>{t('rules.noCourses')}</p>
         <button type="button" className="btn primary" onClick={() => onComplete([])}>
           {t('rules.home')}
@@ -86,6 +90,9 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
 
   return (
     <div className="screen">
+      <div className="screen-top-bar">
+        <LanguageToggle />
+      </div>
       <h1>{t('rules.title')}</h1>
       <p className="step">
         {index + 1} / {names.length}

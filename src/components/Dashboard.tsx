@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AbsenceRecord, AbsenceSource, AppData, AttendanceState, CalendarFilter, Course, ProgramView, ScheduleSlot } from '../types'
 import { ProgramViewToggle } from './ProgramViewToggle'
 import { WeeklyScheduleView } from './WeeklyScheduleView'
@@ -22,7 +22,15 @@ import { findConflicts } from '../logic/conflicts'
 import { todayHoliday } from '../logic/holidays'
 import { triggerHaptic, scaleBounce, particleBurst } from '../lib/haptics'
 import { useTheme } from '../lib/useTheme'
+import {
+  notifyOtherSlotsPendingToday,
+  readNotifRemindersEnabled,
+  tickBeforeClassNotifications,
+  writeNotifRemindersEnabled,
+} from '../lib/notifScheduler'
+import { NotifCheckInModal } from './NotifCheckInModal'
 import { motion } from 'framer-motion'
+import { useLanguage } from '../LanguageContext'
 
 type Props = {
   data: AppData
@@ -30,14 +38,31 @@ type Props = {
   onEditProgram: () => void
   onEditRules: () => void
   onEditSemester: () => void
+  onExportData: () => void
+  onImportDataText: (text: string) => void
+  onResetAllData: () => void
+  onRestoreAutoBackup: () => boolean
+  lastAutoBackupAt: string | null
 }
 
-export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEditSemester }: Props) {
+export function Dashboard({
+  data,
+  onUpdateData,
+  onEditProgram,
+  onEditRules,
+  onEditSemester,
+  onExportData,
+  onImportDataText,
+  onResetAllData,
+  onRestoreAutoBackup,
+  lastAutoBackupAt,
+}: Props) {
   const [view, setView] = useState<ProgramView>('today')
   const [weekOffset, setWeekOffset] = useState(0)
   const [shortcutHandled, setShortcutHandled] = useState(false)
   const [isScrolled, setIsScrolled] = useState(false)
   const { theme, setTheme } = useTheme()
+  const { lang, setLang } = useLanguage()
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 40)
@@ -57,13 +82,45 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
   const [showFilters, setShowFilters] = useState(false)
   const [holidayDismissed, setHolidayDismissed] = useState(false)
   const [reminders, setReminders] = useState<string[]>([])
+  const [notifPanelSlot, setNotifPanelSlot] = useState<ScheduleSlot | null>(null)
+  const [notifPrefsOn, setNotifPrefsOn] = useState(() => readNotifRemindersEnabled())
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine)
+  const [updateReady, setUpdateReady] = useState(false)
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false)
+  const importInputRef = useRef<HTMLInputElement | null>(null)
 
   const conflicts = useMemo(() => findConflicts(data.scheduleSlots), [data.scheduleSlots])
   const holiday = useMemo(() => todayHoliday(), [])
+  const courseByName = useMemo(() => {
+    const map = new Map<string, Course>()
+    for (const c of data.courses) map.set(c.name.trim().toLowerCase(), c)
+    return map
+  }, [data.courses])
+
+  function findCourseFast(courseName: string): Course | undefined {
+    return courseByName.get(courseName.trim().toLowerCase())
+  }
 
   useEffect(() => {
     const id = window.setInterval(() => setClock(new Date()), 45000)
     return () => window.clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true)
+    const onOffline = () => setIsOnline(false)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onUpdate = () => setUpdateReady(true)
+    window.addEventListener('app-update-ready', onUpdate as EventListener)
+    return () => window.removeEventListener('app-update-ready', onUpdate as EventListener)
   }, [])
 
   const classPrompt = useMemo(
@@ -79,7 +136,7 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     const updates: AbsenceRecord[] = []
     const newReminders: string[] = []
     for (const slot of todaySlots) {
-      const course = findCourseByName(data.courses, slot.courseName)
+      const course = findCourseFast(slot.courseName)
       if (!course?.attendanceRequired) continue
       const answered = readClassPromptAnswer(slot.id, clock)
 
@@ -112,7 +169,12 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       writeClassPromptAnswer(slot.id, clock, 'unsure')
     }
     if (newReminders.length > 0) {
-      queueMicrotask(() => setReminders((prev) => [...prev, ...newReminders]))
+      queueMicrotask(() =>
+        setReminders((prev) => {
+          const merged = [...prev, ...newReminders]
+          return [...new Set(merged)].slice(-4)
+        }),
+      )
     }
     if (updates.length > 0) {
       let nextAbsences = [...data.absences]
@@ -121,7 +183,7 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       }
       onUpdateData({ ...data, absences: nextAbsences })
     }
-  }, [clock, data, onUpdateData, todaySlots])
+  }, [clock, todaySlots, data.courses, data.absences, onUpdateData])
 
   useEffect(() => {
     if (shortcutHandled) return
@@ -131,7 +193,7 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     const ymd = toLocalYmd(clock)
     let nextAbsences = [...data.absences]
     for (const slot of todaySlots) {
-      const course = findCourseByName(data.courses, slot.courseName)
+      const course = findCourseFast(slot.courseName)
       if (!course?.attendanceRequired) continue
       const answered = readClassPromptAnswer(slot.id, clock)
       if (answered) continue
@@ -152,7 +214,57 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       setShortcutHandled(true)
       onUpdateData({ ...data, absences: nextAbsences })
     })
-  }, [shortcutHandled, clock, data, onUpdateData, todaySlots])
+  }, [shortcutHandled, clock, todaySlots, data.courses, data.absences, onUpdateData])
+
+  useEffect(() => {
+    const u = new URL(window.location.href)
+    if (u.searchParams.get('view') === 'today') {
+      setView('today')
+      u.searchParams.delete('view')
+      const q = u.searchParams.toString()
+      window.history.replaceState({}, '', `${u.pathname}${q ? `?${q}` : ''}${u.hash}`)
+    }
+  }, [])
+
+  useEffect(() => {
+    const u = new URL(window.location.href)
+    if (u.searchParams.get('notif') !== 'checkin') return
+    const slotId = u.searchParams.get('slotId') ?? undefined
+    const ymd = u.searchParams.get('ymd') ?? toLocalYmd(clock)
+    u.searchParams.delete('notif')
+    u.searchParams.delete('slotId')
+    u.searchParams.delete('ymd')
+    const q = u.searchParams.toString()
+    window.history.replaceState({}, '', `${u.pathname}${q ? `?${q}` : ''}${u.hash}`)
+    if (ymd !== toLocalYmd(clock)) return
+    const daySlots = slotsForDate(data.scheduleSlots, clock)
+    let target: ScheduleSlot | null = null
+    if (slotId) target = daySlots.find((s) => s.id === slotId) ?? null
+    if (!target) {
+      target =
+        daySlots.find((s) => {
+          const c = findCourseFast(s.courseName)
+          return Boolean(c?.attendanceRequired && !readClassPromptAnswer(s.id, clock))
+        }) ?? null
+    }
+    setView('today')
+    if (target) setNotifPanelSlot(target)
+  }, [clock, data.scheduleSlots, data.courses])
+
+  useEffect(() => {
+    if (!readNotifRemindersEnabled()) return
+    const run = () =>
+      void tickBeforeClassNotifications({
+        now: clock,
+        todaySlots,
+        courses: data.courses,
+        title: (slot, name) => `${name} · ${slot.startTime}`,
+        body: t('notif.preBody'),
+      })
+    void run()
+    const id = window.setInterval(run, 60_000)
+    return () => window.clearInterval(id)
+  }, [clock, todaySlots, data.courses])
 
   const trackableCourses = useMemo(() => {
     return data.courses.filter((c) => c.attendanceRequired)
@@ -166,6 +278,20 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       return isRiskZone(used, max, unk)
     })
   }, [trackableCourses, data.absences])
+
+  const pendingCheckinCount = useMemo(
+    () =>
+      todaySlots.filter((s) => {
+        const c = findCourseFast(s.courseName)
+        return Boolean(c?.attendanceRequired && !readClassPromptAnswer(s.id, clock))
+      }).length,
+    [todaySlots, data.courses, clock],
+  )
+
+  const activeFilterLabel = useMemo(() => {
+    if (!calendarFilter) return null
+    return t(`filter.${calendarFilter}` as MsgKey)
+  }, [calendarFilter])
 
   function saveAttendance(rec: AbsenceRecord) {
     const nextAbsences = upsertAttendanceForSlotDay(data.absences, rec)
@@ -311,8 +437,17 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
         source: 'class_prompt',
       })
     ) {
-      writeClassPromptAnswer(classPrompt.slot.id, clock, 'present')
+      const sid = classPrompt.slot.id
+      writeClassPromptAnswer(sid, clock, 'present')
       setClock(new Date())
+      void notifyOtherSlotsPendingToday({
+        excludeSlotId: sid,
+        todaySlots,
+        courses: data.courses,
+        now: clock,
+        title: (slot, name) => `${name} · ${slot.startTime}`,
+        body: t('notif.followBody'),
+      })
     }
   }
 
@@ -329,8 +464,17 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
         source: 'class_prompt',
       })
     ) {
-      writeClassPromptAnswer(classPrompt.slot.id, clock, 'absent')
+      const sid = classPrompt.slot.id
+      writeClassPromptAnswer(sid, clock, 'absent')
       setClock(new Date())
+      void notifyOtherSlotsPendingToday({
+        excludeSlotId: sid,
+        todaySlots,
+        courses: data.courses,
+        now: clock,
+        title: (slot, name) => `${name} · ${slot.startTime}`,
+        body: t('notif.followBody'),
+      })
     }
   }
 
@@ -355,9 +499,18 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
         source: 'quick',
       })
     ) {
-      writeClassPromptAnswer(slot.id, clock, state)
+      const sid = slot.id
+      writeClassPromptAnswer(sid, clock, state)
       setClock(new Date())
       setTodayModalSlot(null)
+      void notifyOtherSlotsPendingToday({
+        excludeSlotId: sid,
+        todaySlots,
+        courses: data.courses,
+        now: clock,
+        title: (s, name) => `${name} · ${s.startTime}`,
+        body: t('notif.followBody'),
+      })
     }
   }
 
@@ -409,10 +562,87 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
     }
   }
 
+  function openFirstPendingCheckin() {
+    const target =
+      todaySlots.find((s) => {
+        const c = findCourseByName(data.courses, s.courseName)
+        return Boolean(c?.attendanceRequired && !readClassPromptAnswer(s.id, clock))
+      }) ?? null
+    if (target) {
+      setView('today')
+      setNotifPanelSlot(target)
+    } else {
+      setReminders((prev) => [...prev, t('shortcuts.noPending')])
+    }
+  }
+
+  function onNotifPanelPresent() {
+    if (!notifPanelSlot) return
+    const course = findCourseByName(data.courses, notifPanelSlot.courseName)
+    if (!course?.attendanceRequired) return
+    const sid = notifPanelSlot.id
+    if (
+      trySetAttendance({
+        courseId: course.id,
+        sessionDate: toLocalYmd(clock),
+        slotId: sid,
+        attendanceState: 'present',
+        source: 'notif_panel',
+      })
+    ) {
+      writeClassPromptAnswer(sid, clock, 'present')
+      setNotifPanelSlot(null)
+      setClock(new Date())
+      void notifyOtherSlotsPendingToday({
+        excludeSlotId: sid,
+        todaySlots,
+        courses: data.courses,
+        now: clock,
+        title: (slot, name) => `${name} · ${slot.startTime}`,
+        body: t('notif.followBody'),
+      })
+    }
+  }
+
+  function onNotifPanelAbsent() {
+    if (!notifPanelSlot) return
+    const course = findCourseByName(data.courses, notifPanelSlot.courseName)
+    if (!course?.attendanceRequired) return
+    const sid = notifPanelSlot.id
+    if (
+      trySetAttendance({
+        courseId: course.id,
+        sessionDate: toLocalYmd(clock),
+        slotId: sid,
+        attendanceState: 'absent',
+        source: 'notif_panel',
+      })
+    ) {
+      writeClassPromptAnswer(sid, clock, 'absent')
+      setNotifPanelSlot(null)
+      setClock(new Date())
+      void notifyOtherSlotsPendingToday({
+        excludeSlotId: sid,
+        todaySlots,
+        courses: data.courses,
+        now: clock,
+        title: (slot, name) => `${name} · ${slot.startTime}`,
+        body: t('notif.followBody'),
+      })
+    }
+  }
+
+  function onNotifPanelSkipWholeDay() {
+    setTodayBulk('absent')
+    setNotifPanelSlot(null)
+  }
+
   function handleTabChange(v: ProgramView) {
     triggerHaptic('light')
     setView(v)
   }
+
+  const backupText = lastAutoBackupAt ? new Date(lastAutoBackupAt).toLocaleString() : t('settings.backupNever')
 
   return (
     <div className="screen home">
@@ -428,29 +658,35 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
           >
             {t('dashboard.title')}
           </motion.h1>
-          <label
-            className="switch"
-            onClick={(e) => {
-              scaleBounce(e.currentTarget as HTMLElement)
-              triggerHaptic('light')
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={theme === 'light'}
-              onChange={(e) => setTheme(e.target.checked ? 'light' : 'dark')}
-              aria-label="Tema degistir"
-            />
-            <span className="slider">
-              <span className="star star_1" />
-              <span className="star star_2" />
-              <span className="star star_3" />
-              <span className="cloud" />
-            </span>
-          </label>
         </div>
         <ProgramViewToggle value={view} onChange={handleTabChange} />
       </header>
+
+      <div className="dashboard-shortcuts" role="group" aria-label="Dashboard kisayollari">
+        <button
+          type="button"
+          className={`btn sm dashboard-shortcut-btn ${view === 'today' ? 'dashboard-shortcut-active' : 'secondary'}`}
+          aria-pressed={view === 'today'}
+          onClick={() => {
+            triggerHaptic('light')
+            setView('today')
+          }}
+        >
+          {t('shortcuts.today')}
+        </button>
+        <button
+          type="button"
+          className={`btn sm dashboard-shortcut-btn ${pendingCheckinCount > 0 ? 'primary' : 'secondary'}`}
+          aria-label={`${t('shortcuts.checkin')} (${pendingCheckinCount})`}
+          onClick={() => {
+            triggerHaptic('light')
+            openFirstPendingCheckin()
+          }}
+        >
+          {t('shortcuts.checkin')}
+          {pendingCheckinCount > 0 ? <span className="dashboard-shortcut-pill">{pendingCheckinCount}</span> : null}
+        </button>
+      </div>
 
       {reminders.length > 0 && (
         <div className="banner banner-info" role="status">
@@ -460,6 +696,33 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
           <button type="button" className="btn text sm" onClick={() => setReminders([])}>
             {t('holiday.dismiss')}
           </button>
+        </div>
+      )}
+
+      {!isOnline && (
+        <div className="banner banner-warn" role="status">
+          <p>{t('status.offline')}</p>
+          <p className="muted small">{t('status.offlineHint')}</p>
+        </div>
+      )}
+
+      {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
+        <div className="banner banner-warn" role="status">
+          <p>{t('status.permissionDenied')}</p>
+        </div>
+      )}
+
+      {updateReady && (
+        <div className="banner banner-info" role="status">
+          <p>{t('update.ready')}</p>
+          <div className="banner-class-actions">
+            <button type="button" className="btn secondary sm" onClick={() => window.location.reload()}>
+              {t('update.reload')}
+            </button>
+            <button type="button" className="btn text sm" onClick={() => setShowReleaseNotes(true)}>
+              {t('update.notes')}
+            </button>
+          </div>
         </div>
       )}
 
@@ -614,10 +877,16 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
             <button
               type="button"
               className={`btn sm ${showFilters ? 'primary' : 'secondary'}`}
+              aria-pressed={showFilters}
               onClick={() => setShowFilters((prev) => !prev)}
             >
               {t('filter.toggle')}
             </button>
+            {activeFilterLabel && (
+              <span className="filter-active-pill" role="status">
+                {activeFilterLabel}
+              </span>
+            )}
           </div>
           {showFilters && (
             <div className="filter-bar">
@@ -626,6 +895,7 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
                   key={f}
                   type="button"
                   className={`btn sm filter-chip ${calendarFilter === f ? 'active' : ''}`}
+                  aria-pressed={calendarFilter === f}
                   onClick={() => setCalendarFilter((prev) => (prev === f ? null : f))}
                 >
                   {t(`filter.${f}` as MsgKey)}
@@ -637,28 +907,42 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
       )}
 
       {view === 'week' && (
-        <WeeklyScheduleView
-          anchorDate={clock}
-          weekOffset={weekOffset}
-          onWeekOffset={setWeekOffset}
-          slots={data.scheduleSlots}
-          absences={data.absences}
-          courses={data.courses}
-          calendarFilter={calendarFilter}
-          onRequestCalendarAbsence={(slot, calendarDate) =>
-            requestCalendarAbsence(slot, calendarDate, 'calendar_week')
-          }
-        />
+        <motion.section
+          key="view-week"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+        >
+          <WeeklyScheduleView
+            anchorDate={clock}
+            weekOffset={weekOffset}
+            onWeekOffset={setWeekOffset}
+            slots={data.scheduleSlots}
+            absences={data.absences}
+            courses={data.courses}
+            calendarFilter={calendarFilter}
+            onRequestCalendarAbsence={(slot, calendarDate) =>
+              requestCalendarAbsence(slot, calendarDate, 'calendar_week')
+            }
+          />
+        </motion.section>
       )}
 
       {view === 'month' && (
-        <MonthlyScheduleView
-          slots={data.scheduleSlots}
-          absences={data.absences}
-          courses={data.courses}
-          calendarFilter={calendarFilter}
-          onRequestCalendarAbsence={(slot, day) => requestCalendarAbsence(slot, day, 'calendar_month')}
-        />
+        <motion.section
+          key="view-month"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+        >
+          <MonthlyScheduleView
+            slots={data.scheduleSlots}
+            absences={data.absences}
+            courses={data.courses}
+            calendarFilter={calendarFilter}
+            onRequestCalendarAbsence={(slot, day) => requestCalendarAbsence(slot, day, 'calendar_month')}
+          />
+        </motion.section>
       )}
 
       {view === 'report' && <ReportView courses={data.courses} absences={data.absences} slots={data.scheduleSlots} semesterStart={data.semesterStart} semesterEnd={data.semesterEnd} />}
@@ -667,6 +951,118 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
         <section className="card settings-view">
           <h2>{t('settings.title')}</h2>
           <p className="muted small">{t('settings.lead')}</p>
+          <div className="settings-notif-block">
+            <p className="muted small">{t('settings.themeLabel')}</p>
+            <div className="settings-segment">
+              <button
+                type="button"
+                className={`settings-segment-btn ${theme === 'dark' ? 'active' : ''}`}
+                onClick={() => setTheme('dark')}
+              >
+                {t('settings.themeDark')}
+              </button>
+              <button
+                type="button"
+                className={`settings-segment-btn ${theme === 'light' ? 'active' : ''}`}
+                onClick={() => setTheme('light')}
+              >
+                {t('settings.themeLight')}
+              </button>
+            </div>
+          </div>
+          <div className="settings-notif-block">
+            <p className="muted small">{t('settings.langLabel')}</p>
+            <div className="settings-segment">
+              <button
+                type="button"
+                className={`settings-segment-btn ${lang === 'tr' ? 'active' : ''}`}
+                onClick={() => setLang('tr')}
+              >
+                Turkce
+              </button>
+              <button
+                type="button"
+                className={`settings-segment-btn ${lang === 'en' ? 'active' : ''}`}
+                onClick={() => setLang('en')}
+              >
+                English
+              </button>
+            </div>
+          </div>
+          <div className="settings-notif-block">
+            <p className="muted small">{t('settings.notifLead')}</p>
+            <div className="btn-row wrap" style={{ marginTop: 10 }}>
+              {notifPrefsOn ? (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => {
+                    writeNotifRemindersEnabled(false)
+                    setNotifPrefsOn(false)
+                  }}
+                >
+                  {t('settings.notifDisable')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={async () => {
+                    if (typeof Notification === 'undefined') {
+                      globalThis.alert(t('settings.notifDenied'))
+                      return
+                    }
+                    const p = await Notification.requestPermission()
+                    if (p !== 'granted') {
+                      globalThis.alert(t('settings.notifDenied'))
+                      return
+                    }
+                    if ('serviceWorker' in navigator) await navigator.serviceWorker.ready
+                    writeNotifRemindersEnabled(true)
+                    setNotifPrefsOn(true)
+                  }}
+                >
+                  {t('settings.notifEnable')}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="settings-notif-block">
+            <p className="muted small">{t('settings.dataLead')}</p>
+            <div className="btn-row wrap" style={{ marginTop: 10 }}>
+              <button type="button" className="btn secondary" onClick={onExportData}>
+                {t('footer.export')}
+              </button>
+              <button type="button" className="btn secondary" onClick={() => importInputRef.current?.click()}>
+                {t('footer.import')}
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  if (!onRestoreAutoBackup()) window.alert(t('settings.backupMissing'))
+                }}
+              >
+                {t('settings.backupRestore')}
+              </button>
+              <button type="button" className="btn text danger" onClick={onResetAllData}>
+                {t('footer.reset')}
+              </button>
+            </div>
+            <p className="muted small">{t('settings.backupLast', { at: backupText })}</p>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json"
+              className="sr-only"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (!f) return
+                f.text().then((text) => onImportDataText(text))
+                e.currentTarget.value = ''
+              }}
+            />
+          </div>
           <div className="settings-actions">
             <button type="button" className="btn secondary" onClick={() => setShowExtra(true)}>
               {t('dashboard.addExtra')}
@@ -731,7 +1127,7 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
 
       {calModal && (
         <div className="modal-backdrop modal-layer-high" role="presentation" onClick={() => setCalModal(null)}>
-          <div className="modal sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal sheet" role="dialog" aria-modal="true" aria-label={t('absence.calendarAskTitle')} onClick={(e) => e.stopPropagation()}>
             <h2>{calModal.slot.courseName}</h2>
             <p className="muted small">
               {toLocalYmd(calModal.date)} · {calModal.slot.startTime}–{calModal.slot.endTime}
@@ -761,9 +1157,23 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
         </div>
       )}
 
+      {notifPanelSlot && (
+        <NotifCheckInModal
+          slot={notifPanelSlot}
+          courseName={
+            findCourseByName(data.courses, notifPanelSlot.courseName)?.name ?? notifPanelSlot.courseName
+          }
+          open
+          onPresent={onNotifPanelPresent}
+          onAbsent={onNotifPanelAbsent}
+          onSkipWholeDay={onNotifPanelSkipWholeDay}
+          onDismiss={() => setNotifPanelSlot(null)}
+        />
+      )}
+
       {todayModalSlot && (
         <div className="modal-backdrop modal-layer-high" role="presentation" onClick={() => setTodayModalSlot(null)}>
-          <div className="modal sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal sheet" role="dialog" aria-modal="true" aria-label={t('absence.todayModalTitle')} onClick={(e) => e.stopPropagation()}>
             <h2>{todayModalSlot.courseName}</h2>
             <p className="muted small">
               {todayModalSlot.startTime}–{todayModalSlot.endTime}
@@ -784,6 +1194,22 @@ export function Dashboard({ data, onUpdateData, onEditProgram, onEditRules, onEd
             </div>
             <button type="button" className="btn text sm wide" onClick={() => setTodayModalSlot(null)} style={{ marginTop: 8 }}>
               {t('absence.calendarAskCancel')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showReleaseNotes && (
+        <div className="modal-backdrop modal-layer-high" role="presentation" onClick={() => setShowReleaseNotes(false)}>
+          <div className="modal sheet" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h2>{t('update.notesTitle')}</h2>
+            <ul className="release-notes-list">
+              <li>{t('update.item1')}</li>
+              <li>{t('update.item2')}</li>
+              <li>{t('update.item3')}</li>
+            </ul>
+            <button type="button" className="btn text sm wide" onClick={() => setShowReleaseNotes(false)}>
+              {t('month.close')}
             </button>
           </div>
         </div>

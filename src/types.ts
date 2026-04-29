@@ -32,6 +32,7 @@ export type AbsenceSource =
   | 'calendar_week'
   | 'calendar_month'
   | 'class_prompt'
+  | 'notif_panel'
   | 'legacy'
 
 export type AttendanceState = 'absent' | 'unsure' | 'present' | 'cancelled'

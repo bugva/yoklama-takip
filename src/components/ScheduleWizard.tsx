@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { ScheduleSlot } from '../types'
 import { t, WEEKDAY_SHORT } from '../i18n'
+import { LanguageToggle } from './LanguageToggle'
 import { defaultSlotEnd, gridSlotStarts, isStandardGridSlot } from '../logic/scheduleGrid'
 import { courseHue } from '../logic/courseAccent'
 
@@ -156,6 +157,9 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
 
   return (
     <div className="screen schedule-screen">
+      <div className="screen-top-bar">
+        <LanguageToggle />
+      </div>
       <h1>{t('schedule.title')}</h1>
       <p className="lead">{t('schedule.lead')}</p>
 

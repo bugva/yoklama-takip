@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { t } from '../i18n'
+import { LanguageToggle } from './LanguageToggle'
 
 type Props = {
   initialStart: string
@@ -14,6 +15,9 @@ export function SemesterDatePicker({ initialStart, initialEnd, onCancel, onCompl
 
   return (
     <div className="screen">
+      <div className="screen-top-bar">
+        <LanguageToggle />
+      </div>
       <div className="card semester-card">
         <div className="semester-icon">📅</div>
         <h2>{t('semester.title')}</h2>

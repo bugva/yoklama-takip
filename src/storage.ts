@@ -3,6 +3,8 @@ import type { AbsenceRecord, AppData, AttendanceState } from './types'
 /** Plan örneğiyle uyumlu ana anahtar; eski kurulumlar için yedek anahtar okunur */
 const STORAGE_KEY = 'attendance-tracker-v1'
 const LEGACY_KEY = 'yoklama-takip-v1'
+const AUTO_BACKUP_KEY = 'attendance-tracker-auto-backup-v1'
+const AUTO_BACKUP_AT_KEY = 'attendance-tracker-auto-backup-at'
 
 const CURRENT_VERSION = 2 as const
 
@@ -38,6 +40,7 @@ function migrateAbsenceFromUnknown(a: unknown): AbsenceRecord | null {
     source === 'calendar_week' ||
     source === 'calendar_month' ||
     source === 'class_prompt' ||
+    source === 'notif_panel' ||
     source === 'legacy'
       ? source
       : undefined
@@ -129,7 +132,10 @@ export function loadData(): AppData | null {
 
 export function saveData(data: AppData): void {
   const toSave: AppData = { ...data, version: CURRENT_VERSION }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+  const raw = JSON.stringify(toSave)
+  localStorage.setItem(STORAGE_KEY, raw)
+  localStorage.setItem(AUTO_BACKUP_KEY, raw)
+  localStorage.setItem(AUTO_BACKUP_AT_KEY, new Date().toISOString())
 }
 
 export function exportJson(data: AppData): string {
@@ -147,4 +153,19 @@ export function importJson(text: string): AppData | null {
 
 export function emptyData(): AppData {
   return { version: CURRENT_VERSION, scheduleSlots: [], courses: [], absences: [] }
+}
+
+export function loadAutoBackup(): AppData | null {
+  try {
+    const raw = localStorage.getItem(AUTO_BACKUP_KEY)
+    if (!raw) return null
+    return normalizeAppData(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+export function lastAutoBackupAt(): string | null {
+  const raw = localStorage.getItem(AUTO_BACKUP_AT_KEY)
+  return typeof raw === 'string' && raw ? raw : null
 }

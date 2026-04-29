@@ -8,6 +8,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,svg,ico,png,woff2}'],
+      },
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
@@ -43,16 +49,27 @@ export default defineConfig({
         ],
         shortcuts: [
           {
+            name: 'Bugün',
+            short_name: 'Bugün',
+            description: 'Bugünkü program',
+            url: './?view=today',
+            icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }],
+          },
+          {
+            name: 'Yoklama işaretle',
+            short_name: 'Yoklama',
+            description: 'Bugünkü ders için katılım sor',
+            url: './?notif=checkin',
+            icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }],
+          },
+          {
             name: 'Bugün gitmedim',
             short_name: 'Gitmedim',
             description: 'Bugünkü dersleri devamsız olarak işaretle',
-            url: '/?action=mark-absent',
-            icons: [{ src: '/pwa-192x192.png', sizes: '192x192' }],
+            url: './?action=mark-absent',
+            icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }],
           },
         ],
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,ico,png,woff2}'],
       },
     }),
   ],

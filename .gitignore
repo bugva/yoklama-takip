@@ -22,3 +22,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local backup artifacts
+index.html.backup_oled_design
+src_backup_oled_design/
+
+# Secrets and private credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+*credentials*.json
+*secret*.json
+id_rsa
+id_ed25519

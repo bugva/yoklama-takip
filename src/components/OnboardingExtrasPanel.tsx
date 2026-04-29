@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { ScheduleSlot } from '../types'
 import { MONTH_NAMES, t, WEEKDAY_SHORT } from '../i18n'
+import { LanguageToggle } from './LanguageToggle'
 import { mondayFirstDayIndex, toLocalYmd } from '../logic/dateUtils'
 
 type ExtraKind = 'lab' | 'exam' | 'recit'
@@ -97,6 +98,7 @@ export function OnboardingExtrasPanel({ initialSlots, onComplete, onSkip }: Prop
   return (
     <div className="screen onboarding-extras-screen">
       <div className="onboarding-extras-top">
+        <LanguageToggle />
         <button type="button" className="btn text sm onboarding-skip-btn" onClick={onSkip}>
           Atla
         </button>
