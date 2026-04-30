@@ -14,6 +14,8 @@ type Props = {
   courses: Course[]
   calendarFilter?: CalendarFilter | null
   onRequestCalendarAbsence: (slot: ScheduleSlot, day: Date) => void
+  quickTapEnabled?: boolean
+  onQuickTapMark?: (slot: ScheduleSlot, day: Date) => void
 }
 
 function startOfMonth(d: Date): Date {
@@ -34,7 +36,15 @@ function formatDayTitle(d: Date): string {
   return `${d.getDate()} ${m} ${d.getFullYear()}`
 }
 
-export function MonthlyScheduleView({ slots, absences, courses, calendarFilter = null, onRequestCalendarAbsence }: Props) {
+export function MonthlyScheduleView({
+  slots,
+  absences,
+  courses,
+  calendarFilter = null,
+  onRequestCalendarAbsence,
+  quickTapEnabled = false,
+  onQuickTapMark,
+}: Props) {
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()))
   const [selected, setSelected] = useState<Date | null>(null)
 
@@ -148,6 +158,10 @@ export function MonthlyScheduleView({ slots, absences, courses, calendarFilter =
                       className={`month-detail-card${state ? ` month-card-${state}` : ''}${isFuture ? ' slot-disabled' : ''}`}
                       disabled={isFuture}
                       onClick={() => {
+                        if (quickTapEnabled && onQuickTapMark) {
+                          onQuickTapMark(s, selected)
+                          return
+                        }
                         onRequestCalendarAbsence(s, selected)
                         setSelected(null)
                       }}

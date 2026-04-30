@@ -16,6 +16,8 @@ type Props = {
   courses: Course[]
   calendarFilter?: CalendarFilter | null
   onRequestCalendarAbsence: (slot: ScheduleSlot, calendarDate: Date) => void
+  quickTapEnabled?: boolean
+  onQuickTapMark?: (slot: ScheduleSlot, calendarDate: Date) => void
 }
 
 export function WeeklyScheduleView({
@@ -27,6 +29,8 @@ export function WeeklyScheduleView({
   courses,
   calendarFilter = null,
   onRequestCalendarAbsence,
+  quickTapEnabled = false,
+  onQuickTapMark,
 }: Props) {
   const days = slotsByWeekDays(slots, anchorDate, weekOffset)
   const labels = WEEKDAY_SHORT
@@ -85,7 +89,13 @@ export function WeeklyScheduleView({
                       <button
                         type="button"
                         className={`mini-slot-btn${state ? ` slot-state-${state}` : ''}${isFuture ? ' slot-disabled' : ''}`}
-                        onClick={() => onRequestCalendarAbsence(s, date)}
+                        onClick={() => {
+                          if (quickTapEnabled && onQuickTapMark) {
+                            onQuickTapMark(s, date)
+                            return
+                          }
+                          onRequestCalendarAbsence(s, date)
+                        }}
                         disabled={isFuture}
                         aria-label={t('week.addAbsenceA11y', {
                           course: s.courseName,

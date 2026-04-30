@@ -14,18 +14,18 @@ import {
 import { AddExtraLessonModal } from './AddExtraLessonModal'
 import { t, type MsgKey } from '../i18n'
 import { findCourseByName } from '../logic/coursesFromSchedule'
-import { upsertAttendanceForSlotDay } from '../logic/absenceRecords'
-import { pickClassPromptSlot, readClassPromptAnswer, writeClassPromptAnswer } from '../logic/classPrompt'
+import { calendarSlotStateOnDate, upsertAttendanceForSlotDay } from '../logic/absenceRecords'
+import { readClassPromptAnswer, writeClassPromptAnswer } from '../logic/classPrompt'
 import { minutesSinceMidnight, toLocalYmd } from '../logic/dateUtils'
 import { ReportView } from './ReportView'
 import { findConflicts } from '../logic/conflicts'
 import { todayHoliday } from '../logic/holidays'
-import { triggerHaptic, scaleBounce, particleBurst } from '../lib/haptics'
+import { triggerHaptic, scaleBounce } from '../lib/haptics'
 import { useTheme } from '../lib/useTheme'
 import {
-  notifyOtherSlotsPendingToday,
+  notifNavigatePath,
   readNotifRemindersEnabled,
-  tickBeforeClassNotifications,
+  tickEndOfDayWrapUpNotification,
   writeNotifRemindersEnabled,
 } from '../lib/notifScheduler'
 import { NotifCheckInModal } from './NotifCheckInModal'
@@ -57,6 +57,7 @@ export function Dashboard({
   onRestoreAutoBackup,
   lastAutoBackupAt,
 }: Props) {
+  const QUICK_TAP_KEY = 'quick-tap-marking-enabled'
   const [view, setView] = useState<ProgramView>('today')
   const [weekOffset, setWeekOffset] = useState(0)
   const [shortcutHandled, setShortcutHandled] = useState(false)
@@ -83,7 +84,10 @@ export function Dashboard({
   const [holidayDismissed, setHolidayDismissed] = useState(false)
   const [reminders, setReminders] = useState<string[]>([])
   const [notifPanelSlot, setNotifPanelSlot] = useState<ScheduleSlot | null>(null)
+  const [wrapupOpen, setWrapupOpen] = useState(false)
+  const [wrapupStateBySlot, setWrapupStateBySlot] = useState<Record<string, 'present' | 'absent'>>({})
   const [notifPrefsOn, setNotifPrefsOn] = useState(() => readNotifRemindersEnabled())
+  const [quickTapEnabled, setQuickTapEnabled] = useState(() => localStorage.getItem(QUICK_TAP_KEY) === '1')
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [updateReady, setUpdateReady] = useState(false)
   const [showReleaseNotes, setShowReleaseNotes] = useState(false)
@@ -107,6 +111,11 @@ export function Dashboard({
   }, [])
 
   useEffect(() => {
+    if (quickTapEnabled) localStorage.setItem(QUICK_TAP_KEY, '1')
+    else localStorage.removeItem(QUICK_TAP_KEY)
+  }, [quickTapEnabled])
+
+  useEffect(() => {
     const onOnline = () => setIsOnline(true)
     const onOffline = () => setIsOnline(false)
     window.addEventListener('online', onOnline)
@@ -123,50 +132,25 @@ export function Dashboard({
     return () => window.removeEventListener('app-update-ready', onUpdate as EventListener)
   }, [])
 
-  const classPrompt = useMemo(
-    () => pickClassPromptSlot(data.scheduleSlots, data.courses, clock),
-    [clock, data.scheduleSlots, data.courses],
-  )
-
   const todaySlots = useMemo(() => slotsForDate(data.scheduleSlots, clock), [data.scheduleSlots, clock])
+  const trackableTodaySlots = useMemo(
+    () => todaySlots.filter((s) => Boolean(findCourseFast(s.courseName)?.attendanceRequired)),
+    [todaySlots, data.courses],
+  )
 
   useEffect(() => {
     const nowMinutes = clock.getHours() * 60 + clock.getMinutes()
     const ymd = toLocalYmd(clock)
-    const updates: AbsenceRecord[] = []
     const newReminders: string[] = []
     for (const slot of todaySlots) {
       const course = findCourseFast(slot.courseName)
       if (!course?.attendanceRequired) continue
-      const answered = readClassPromptAnswer(slot.id, clock)
-
       const startMin = minutesSinceMidnight(slot.startTime)
-      const endMin = minutesSinceMidnight(slot.endTime)
       const beforeKey = `reminder-before-${slot.id}-${ymd}`
-      const endingKey = `reminder-ending-${slot.id}-${ymd}`
       if (nowMinutes >= startMin - 10 && nowMinutes < startMin && !localStorage.getItem(beforeKey)) {
         localStorage.setItem(beforeKey, '1')
         newReminders.push(t('reminder.before', { course: course.name, min: startMin - nowMinutes }))
       }
-      if (nowMinutes >= endMin - 5 && nowMinutes < endMin && !answered && !localStorage.getItem(endingKey)) {
-        localStorage.setItem(endingKey, '1')
-        newReminders.push(t('reminder.ending', { course: course.name }))
-      }
-
-      if (answered) continue
-      if (nowMinutes < endMin) continue
-      updates.push({
-        id: crypto.randomUUID(),
-        courseId: course.id,
-        recordedAt: new Date().toISOString(),
-        sessionDate: ymd,
-        dateUnknown: true,
-        slotId: slot.id,
-        source: 'class_prompt',
-        attendanceState: 'unsure',
-        countTowardsLimit: true,
-      })
-      writeClassPromptAnswer(slot.id, clock, 'unsure')
     }
     if (newReminders.length > 0) {
       queueMicrotask(() =>
@@ -176,14 +160,7 @@ export function Dashboard({
         }),
       )
     }
-    if (updates.length > 0) {
-      let nextAbsences = [...data.absences]
-      for (const rec of updates) {
-        nextAbsences = upsertAttendanceForSlotDay(nextAbsences, rec)
-      }
-      onUpdateData({ ...data, absences: nextAbsences })
-    }
-  }, [clock, todaySlots, data.courses, data.absences, onUpdateData])
+  }, [clock, todaySlots, data.courses])
 
   useEffect(() => {
     if (shortcutHandled) return
@@ -228,7 +205,8 @@ export function Dashboard({
 
   useEffect(() => {
     const u = new URL(window.location.href)
-    if (u.searchParams.get('notif') !== 'checkin') return
+    const notifKind = u.searchParams.get('notif')
+    if (notifKind !== 'checkin' && notifKind !== 'wrapup') return
     const slotId = u.searchParams.get('slotId') ?? undefined
     const ymd = u.searchParams.get('ymd') ?? toLocalYmd(clock)
     u.searchParams.delete('notif')
@@ -238,6 +216,11 @@ export function Dashboard({
     window.history.replaceState({}, '', `${u.pathname}${q ? `?${q}` : ''}${u.hash}`)
     if (ymd !== toLocalYmd(clock)) return
     const daySlots = slotsForDate(data.scheduleSlots, clock)
+    if (notifKind === 'wrapup') {
+      setView('today')
+      setWrapupOpen(true)
+      return
+    }
     let target: ScheduleSlot | null = null
     if (slotId) target = daySlots.find((s) => s.id === slotId) ?? null
     if (!target) {
@@ -254,12 +237,12 @@ export function Dashboard({
   useEffect(() => {
     if (!readNotifRemindersEnabled()) return
     const run = () =>
-      void tickBeforeClassNotifications({
+      void tickEndOfDayWrapUpNotification({
         now: clock,
         todaySlots,
         courses: data.courses,
-        title: (slot, name) => `${name} · ${slot.startTime}`,
-        body: t('notif.preBody'),
+        title: t('notif.wrapupTitle'),
+        body: t('notif.wrapupBody'),
       })
     void run()
     const id = window.setInterval(run, 60_000)
@@ -423,67 +406,6 @@ export function Dashboard({
     setCalModal(null)
   }
 
-  function onClassPromptPresent(e: React.MouseEvent<HTMLButtonElement>) {
-    if (!classPrompt) return
-    scaleBounce(e.currentTarget)
-    particleBurst(e.currentTarget, 'var(--success)')
-    triggerHaptic('medium')
-    if (
-      trySetAttendance({
-        courseId: classPrompt.courseId,
-        sessionDate: toLocalYmd(clock),
-        slotId: classPrompt.slot.id,
-        attendanceState: 'present',
-        source: 'class_prompt',
-      })
-    ) {
-      const sid = classPrompt.slot.id
-      writeClassPromptAnswer(sid, clock, 'present')
-      setClock(new Date())
-      void notifyOtherSlotsPendingToday({
-        excludeSlotId: sid,
-        todaySlots,
-        courses: data.courses,
-        now: clock,
-        title: (slot, name) => `${name} · ${slot.startTime}`,
-        body: t('notif.followBody'),
-      })
-    }
-  }
-
-  function onClassPromptAbsent(e: React.MouseEvent<HTMLButtonElement>) {
-    if (!classPrompt) return
-    scaleBounce(e.currentTarget)
-    triggerHaptic('heavy')
-    if (
-      trySetAttendance({
-        courseId: classPrompt.courseId,
-        sessionDate: toLocalYmd(clock),
-        slotId: classPrompt.slot.id,
-        attendanceState: 'absent',
-        source: 'class_prompt',
-      })
-    ) {
-      const sid = classPrompt.slot.id
-      writeClassPromptAnswer(sid, clock, 'absent')
-      setClock(new Date())
-      void notifyOtherSlotsPendingToday({
-        excludeSlotId: sid,
-        todaySlots,
-        courses: data.courses,
-        now: clock,
-        title: (slot, name) => `${name} · ${slot.startTime}`,
-        body: t('notif.followBody'),
-      })
-    }
-  }
-
-  function onClassPromptLater() {
-    if (!classPrompt) return
-    writeClassPromptAnswer(classPrompt.slot.id, clock, 'dismissed')
-    setClock(new Date())
-  }
-
   function setTodayAttendance(slot: ScheduleSlot, state: 'present' | 'absent') {
     const course = findCourseByName(data.courses, slot.courseName)
     if (!course?.attendanceRequired) {
@@ -503,14 +425,6 @@ export function Dashboard({
       writeClassPromptAnswer(sid, clock, state)
       setClock(new Date())
       setTodayModalSlot(null)
-      void notifyOtherSlotsPendingToday({
-        excludeSlotId: sid,
-        todaySlots,
-        courses: data.courses,
-        now: clock,
-        title: (s, name) => `${name} · ${s.startTime}`,
-        body: t('notif.followBody'),
-      })
     }
   }
 
@@ -563,14 +477,9 @@ export function Dashboard({
   }
 
   function openFirstPendingCheckin() {
-    const target =
-      todaySlots.find((s) => {
-        const c = findCourseByName(data.courses, s.courseName)
-        return Boolean(c?.attendanceRequired && !readClassPromptAnswer(s.id, clock))
-      }) ?? null
-    if (target) {
+    if (trackableTodaySlots.length > 0) {
       setView('today')
-      setNotifPanelSlot(target)
+      setWrapupOpen(true)
     } else {
       setReminders((prev) => [...prev, t('shortcuts.noPending')])
     }
@@ -593,14 +502,6 @@ export function Dashboard({
       writeClassPromptAnswer(sid, clock, 'present')
       setNotifPanelSlot(null)
       setClock(new Date())
-      void notifyOtherSlotsPendingToday({
-        excludeSlotId: sid,
-        todaySlots,
-        courses: data.courses,
-        now: clock,
-        title: (slot, name) => `${name} · ${slot.startTime}`,
-        body: t('notif.followBody'),
-      })
     }
   }
 
@@ -621,14 +522,6 @@ export function Dashboard({
       writeClassPromptAnswer(sid, clock, 'absent')
       setNotifPanelSlot(null)
       setClock(new Date())
-      void notifyOtherSlotsPendingToday({
-        excludeSlotId: sid,
-        todaySlots,
-        courses: data.courses,
-        now: clock,
-        title: (slot, name) => `${name} · ${slot.startTime}`,
-        body: t('notif.followBody'),
-      })
     }
   }
 
@@ -637,9 +530,115 @@ export function Dashboard({
     setNotifPanelSlot(null)
   }
 
+  function wrapupMarkPresent(slotId: string) {
+    setWrapupStateBySlot((prev) => ({ ...prev, [slotId]: 'present' }))
+  }
+
+  function wrapupMarkAbsent(slotId: string) {
+    setWrapupStateBySlot((prev) => ({ ...prev, [slotId]: 'absent' }))
+  }
+
+  function saveWrapup() {
+    const ymd = toLocalYmd(clock)
+    let nextAbsences = [...data.absences]
+    for (const slot of trackableTodaySlots) {
+      const course = findCourseFast(slot.courseName)
+      if (!course?.attendanceRequired) continue
+      const state = wrapupStateBySlot[slot.id] ?? 'absent'
+      const rec: AbsenceRecord = {
+        id: crypto.randomUUID(),
+        courseId: course.id,
+        recordedAt: new Date().toISOString(),
+        sessionDate: ymd,
+        slotId: slot.id,
+        source: 'notif_panel',
+        attendanceState: state,
+        countTowardsLimit: state === 'absent',
+      }
+      nextAbsences = upsertAttendanceForSlotDay(nextAbsences, rec)
+      writeClassPromptAnswer(slot.id, clock, state)
+    }
+    onUpdateData({ ...data, absences: nextAbsences })
+    setWrapupOpen(false)
+    setWrapupStateBySlot({})
+    setClock(new Date())
+  }
+
   function handleTabChange(v: ProgramView) {
     triggerHaptic('light')
     setView(v)
+  }
+
+  function quickSetStateForSlot(
+    slot: ScheduleSlot,
+    day: Date,
+    state: AttendanceState,
+    source: 'quick' | 'calendar_week' | 'calendar_month',
+  ) {
+    const course = findCourseFast(slot.courseName)
+    if (!course?.attendanceRequired) {
+      window.alert(t('absence.calendarNoTrackable'))
+      return
+    }
+    if (
+      trySetAttendance({
+        courseId: course.id,
+        sessionDate: toLocalYmd(day),
+        attendanceState: state,
+        slotId: slot.id,
+        source,
+      })
+    ) {
+      if (state === 'present' || state === 'absent' || state === 'unsure') {
+        writeClassPromptAnswer(slot.id, day, state === 'present' ? 'present' : state === 'absent' ? 'absent' : 'unsure')
+      }
+      setClock(new Date())
+    }
+  }
+
+  function clearQuickStateForSlotDay(slot: ScheduleSlot, day: Date) {
+    const ymd = toLocalYmd(day)
+    const nextAbsences = data.absences.filter((a) => !(a.slotId === slot.id && a.sessionDate === ymd))
+    onUpdateData({ ...data, absences: nextAbsences })
+    writeClassPromptAnswer(slot.id, day, 'dismissed')
+    setClock(new Date())
+  }
+
+  function handleQuickTapCycle(
+    slot: ScheduleSlot,
+    day: Date,
+    source: 'quick' | 'calendar_week' | 'calendar_month',
+    includeUnsure: boolean,
+  ) {
+    const current = calendarSlotStateOnDate(data.absences, slot, day, data.courses)
+    let next: 'present' | 'absent' | 'unsure' | null
+    if (current === 'present') next = 'absent'
+    else if (current === 'absent') next = includeUnsure ? 'unsure' : null
+    else if (current === 'unsure') next = null
+    else next = 'present'
+    if (next === null) {
+      clearQuickStateForSlotDay(slot, day)
+      return
+    }
+    quickSetStateForSlot(slot, day, next, source)
+  }
+
+  async function sendTestWrapupNotification() {
+    if (typeof Notification === 'undefined') {
+      window.alert(t('settings.notifDenied'))
+      return
+    }
+    if (Notification.permission !== 'granted') {
+      window.alert(t('settings.notifDenied'))
+      return
+    }
+    if (!('serviceWorker' in navigator)) return
+    const reg = await navigator.serviceWorker.ready
+    await reg.showNotification(t('notif.wrapupTitle'), {
+      body: t('notif.wrapupBody'),
+      tag: `notif-wrapup-test-${Date.now()}`,
+      data: { path: notifNavigatePath({ notif: 'wrapup', ymd: toLocalYmd(clock) }) },
+    })
   }
 
   const backupText = lastAutoBackupAt ? new Date(lastAutoBackupAt).toLocaleString() : t('settings.backupNever')
@@ -764,28 +763,6 @@ export function Dashboard({
         </div>
       )}
 
-      {classPrompt && (
-        <div className="banner banner-class" role="dialog" aria-label={t('absence.classPromptTitle')}>
-          <p className="banner-class-text">
-            {t('absence.classPromptBody', {
-              course: classPrompt.courseName,
-              time: `${classPrompt.slot.startTime}–${classPrompt.slot.endTime}`,
-            })}
-          </p>
-          <div className="banner-class-actions">
-            <button type="button" className="btn secondary sm" onClick={(e) => onClassPromptPresent(e)}>
-              {t('absence.classPromptYes')}
-            </button>
-            <button type="button" className="btn primary sm" onClick={(e) => onClassPromptAbsent(e)}>
-              {t('absence.classPromptNo')}
-            </button>
-            <button type="button" className="btn text sm" onClick={onClassPromptLater}>
-              {t('absence.classPromptLater')}
-            </button>
-          </div>
-        </div>
-      )}
-
       {view === 'today' && (
         <section className="card card-today">
           <div className="today-head">
@@ -829,6 +806,10 @@ export function Dashboard({
                     type="button"
                     className={`today-card ${stateClass}`}
                     onClick={(e) => {
+                      if (quickTapEnabled) {
+                        handleQuickTapCycle(s, clock, 'quick', false)
+                        return
+                      }
                       scaleBounce(e.currentTarget)
                       triggerHaptic('light')
                       setTodayModalSlot(s)
@@ -921,6 +902,10 @@ export function Dashboard({
             absences={data.absences}
             courses={data.courses}
             calendarFilter={calendarFilter}
+            quickTapEnabled={quickTapEnabled}
+            onQuickTapMark={(slot, calendarDate) =>
+              handleQuickTapCycle(slot, calendarDate, 'calendar_week', false)
+            }
             onRequestCalendarAbsence={(slot, calendarDate) =>
               requestCalendarAbsence(slot, calendarDate, 'calendar_week')
             }
@@ -940,6 +925,10 @@ export function Dashboard({
             absences={data.absences}
             courses={data.courses}
             calendarFilter={calendarFilter}
+            quickTapEnabled={quickTapEnabled}
+            onQuickTapMark={(slot, day) =>
+              handleQuickTapCycle(slot, day, 'calendar_month', true)
+            }
             onRequestCalendarAbsence={(slot, day) => requestCalendarAbsence(slot, day, 'calendar_month')}
           />
         </motion.section>
@@ -990,6 +979,28 @@ export function Dashboard({
             </div>
           </div>
           <div className="settings-notif-block">
+            <p className="muted small">{t('settings.tapModeLabel')}</p>
+            <div className="settings-segment">
+              <button
+                type="button"
+                className={`settings-segment-btn ${quickTapEnabled ? 'active' : ''}`}
+                onClick={() => setQuickTapEnabled(true)}
+              >
+                {t('settings.tapModeOn')}
+              </button>
+              <button
+                type="button"
+                className={`settings-segment-btn ${quickTapEnabled ? '' : 'active'}`}
+                onClick={() => setQuickTapEnabled(false)}
+              >
+                {t('settings.tapModeOff')}
+              </button>
+            </div>
+            <p className="muted small" style={{ marginTop: 8 }}>
+              {t('settings.tapModeHint')}
+            </p>
+          </div>
+          <div className="settings-notif-block">
             <p className="muted small">{t('settings.notifLead')}</p>
             <div className="btn-row wrap" style={{ marginTop: 10 }}>
               {notifPrefsOn ? (
@@ -1025,6 +1036,9 @@ export function Dashboard({
                   {t('settings.notifEnable')}
                 </button>
               )}
+              <button type="button" className="btn secondary" onClick={() => void sendTestWrapupNotification()}>
+                {t('settings.notifTest')}
+              </button>
             </div>
           </div>
           <div className="settings-notif-block">
@@ -1169,6 +1183,49 @@ export function Dashboard({
           onSkipWholeDay={onNotifPanelSkipWholeDay}
           onDismiss={() => setNotifPanelSlot(null)}
         />
+      )}
+
+      {wrapupOpen && (
+        <div className="modal-backdrop modal-layer-high" role="presentation" onClick={() => setWrapupOpen(false)}>
+          <div className="modal sheet" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <h2>{t('notif.wrapupPanelTitle')}</h2>
+            <p className="muted small">{t('notif.wrapupPanelLead')}</p>
+            {trackableTodaySlots.length === 0 ? (
+              <p className="muted">{t('shortcuts.noPending')}</p>
+            ) : (
+              <div className="wrapup-list">
+                {trackableTodaySlots.map((slot) => {
+                  const state = wrapupStateBySlot[slot.id]
+                  return (
+                    <button
+                      key={slot.id}
+                      type="button"
+                      className={`wrapup-item ${state === 'present' ? 'wrapup-present' : ''} ${state === 'absent' ? 'wrapup-absent' : ''}`}
+                      onClick={() => wrapupMarkPresent(slot.id)}
+                      onDoubleClick={() => wrapupMarkAbsent(slot.id)}
+                    >
+                      <span className="wrapup-main">
+                        <strong>{slot.courseName}</strong>
+                        <span className="muted small">{slot.startTime}–{slot.endTime}</span>
+                      </span>
+                      <span className="wrapup-state">
+                        {state === 'present' ? t('absence.todayWent') : state === 'absent' ? t('absence.todayAbsent') : t('notif.wrapupUntouched')}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            <div className="btn-row">
+              <button type="button" className="btn primary" onClick={saveWrapup}>
+                {t('notif.wrapupSave')}
+              </button>
+              <button type="button" className="btn text sm" onClick={() => setWrapupOpen(false)}>
+                {t('month.close')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {todayModalSlot && (
