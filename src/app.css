@@ -455,6 +455,336 @@ h2 {
   margin-bottom: 14px;
 }
 
+.brand-title {
+  letter-spacing: -0.03em;
+  text-transform: none;
+  background: linear-gradient(120deg, #ffffff 8%, #8b85ff 45%, #54d6ff 78%, #ffffff 100%);
+  background-size: 180% 180%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 18px rgba(94, 92, 230, 0.24);
+  transition: filter 0.25s ease, text-shadow 0.25s ease;
+  animation: brand-gradient-flow 4.8s ease-in-out infinite;
+}
+
+.brand-title:hover,
+.brand-title:active {
+  filter: brightness(1.08) saturate(1.2);
+  text-shadow: 0 0 24px rgba(94, 92, 230, 0.34);
+}
+
+@keyframes brand-gradient-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes disco-fade {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes disco-drop {
+  0% { transform: translate(-50%, -560px); }
+  55% { transform: translate(-50%, 42px); }
+  70% { transform: translate(-50%, -18px); }
+  82% { transform: translate(-50%, 12px); }
+  92% { transform: translate(-50%, -5px); }
+  100% { transform: translate(-50%, 0); }
+}
+
+@keyframes disco-sway {
+  0% { transform: translate(-50%, 0) rotate(0deg); }
+  22% { transform: translate(-50%, 0) rotate(9deg); }
+  44% { transform: translate(-50%, 0) rotate(-6.2deg); }
+  63% { transform: translate(-50%, 0) rotate(3.8deg); }
+  82% { transform: translate(-50%, 0) rotate(-2deg); }
+  100% { transform: translate(-50%, 0) rotate(0deg); }
+}
+
+@keyframes disco-spin-3d {
+  0% { transform: rotateX(90deg) rotateY(0deg) rotateZ(0deg); }
+  50% { transform: rotateX(90deg) rotateY(-180deg) rotateZ(180deg); }
+  100% { transform: rotateX(90deg) rotateY(-360deg) rotateZ(360deg); }
+}
+
+@keyframes rope-stretch {
+  0% { transform: translateX(-50%) scaleY(0.35); opacity: 0.35; }
+  46% { transform: translateX(-50%) scaleY(1.1); opacity: 1; }
+  66% { transform: translateX(-50%) scaleY(0.94); opacity: 0.95; }
+  100% { transform: translateX(-50%) scaleY(1); opacity: 0.9; }
+}
+
+@keyframes disco-beam-sweep {
+  0%, 32% { opacity: 0; filter: blur(0); }
+  48% { opacity: 0.25; filter: blur(0.5px); }
+  70% { opacity: 0.8; filter: blur(1.2px); }
+  100% { opacity: 0.35; filter: blur(0); }
+}
+
+@keyframes disco-glow {
+  0%, 32% { opacity: 0; transform: translateX(-50%) scale(0.76); }
+  52% { opacity: 0.32; transform: translateX(-50%) scale(1.04); }
+  75% { opacity: 0.58; transform: translateX(-50%) scale(1.12); }
+  100% { opacity: 0.42; transform: translateX(-50%) scale(1); }
+}
+
+.disco-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.34);
+  animation: disco-fade 3.4s ease-out forwards;
+  perspective: 900px;
+}
+
+.disco-rig {
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  width: 88px;
+  height: 190px;
+  transform: translate(-50%, -560px);
+  transform-origin: top center;
+  animation:
+    disco-drop 3.2s cubic-bezier(0.17, 0.8, 0.16, 1) forwards,
+    disco-sway 3.2s ease-out forwards;
+}
+
+.disco-rope {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 104px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.35));
+  transform-origin: top center;
+  transform: translateX(-50%) scaleY(0.35);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.22);
+  animation: rope-stretch 3.2s ease-out forwards;
+}
+
+.disco-ball {
+  position: absolute;
+  left: 50%;
+  top: 96px;
+  width: 84px;
+  height: 84px;
+  box-shadow:
+    0 0 38px rgba(139, 133, 255, 0.76),
+    0 0 62px rgba(84, 214, 255, 0.48);
+  transform: translateX(-50%);
+  transform-style: preserve-3d;
+  animation: disco-spin-3d 5.8s linear infinite;
+  overflow: visible;
+}
+
+.disco-ball::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+}
+
+.disco-ball::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 24%, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.04) 44%, rgba(0, 0, 0, 0.16) 100%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.disco-ball-glow {
+  position: absolute;
+  left: 50%;
+  top: 92px;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.9) 0%, rgba(176, 225, 255, 0.35) 34%, rgba(84, 214, 255, 0) 72%);
+  filter: blur(14px);
+  transform: translateX(-50%) scale(0.8);
+  opacity: 0;
+  animation: disco-glow 3.2s ease-out forwards;
+}
+
+.disco-ball-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 50%;
+  display: block;
+  filter: contrast(1.1) brightness(1.05);
+}
+
+.disco-beam {
+  position: absolute;
+  top: 106px;
+  left: 50%;
+  width: 210px;
+  height: 66vh;
+  transform-origin: top center;
+  clip-path: polygon(48% 0, 52% 0, 100% 100%, 0 100%);
+  opacity: 0;
+  animation: disco-beam-sweep 0.95s ease-in-out infinite;
+}
+
+.disco-beam.b1 {
+  transform: translateX(-50%) rotate(-22deg);
+  background: linear-gradient(180deg, rgba(84, 214, 255, 0.7), rgba(84, 214, 255, 0.04));
+}
+
+.disco-beam.b2 {
+  transform: translateX(-50%) rotate(0deg);
+  background: linear-gradient(180deg, rgba(139, 133, 255, 0.68), rgba(139, 133, 255, 0.04));
+  animation-delay: 0.13s;
+}
+
+.disco-beam.b3 {
+  transform: translateX(-50%) rotate(22deg);
+  background: linear-gradient(180deg, rgba(191, 90, 242, 0.7), rgba(191, 90, 242, 0.04));
+  animation-delay: 0.26s;
+}
+
+@keyframes rotateDiscoBall {
+  0% { transform: rotateY(0deg) rotateZ(0deg); }
+  100% { transform: rotateY(360deg) rotateZ(360deg); }
+}
+
+@keyframes rotateDiscoBallMiddle {
+  0% { transform: rotateY(0deg) rotateZ(0deg); }
+  100% { transform: rotateY(-360deg) rotateZ(-360deg); }
+}
+
+@keyframes reflect {
+  0% { opacity: 1; }
+  50% { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+
+@keyframes disco-core-depth {
+  0% {
+    box-shadow:
+      inset -18px -12px 24px rgba(0, 0, 0, 0.36),
+      inset 16px 10px 22px rgba(255, 255, 255, 0.14),
+      0 8px 18px rgba(0, 0, 0, 0.28);
+  }
+  50% {
+    box-shadow:
+      inset 18px -12px 24px rgba(0, 0, 0, 0.36),
+      inset -16px 10px 22px rgba(255, 255, 255, 0.14),
+      0 8px 18px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    box-shadow:
+      inset -18px -12px 24px rgba(0, 0, 0, 0.36),
+      inset 16px 10px 22px rgba(255, 255, 255, 0.14),
+      0 8px 18px rgba(0, 0, 0, 0.28);
+  }
+}
+
+@keyframes disco-wrap-drop {
+  0% { transform: translate(-50%, -460px); opacity: 0; }
+  55% { transform: translate(-50%, 30px); opacity: 1; }
+  72% { transform: translate(-50%, -14px); opacity: 1; }
+  86% { transform: translate(-50%, 8px); opacity: 1; }
+  100% { transform: translate(-50%, 0); opacity: 1; }
+}
+
+#discoBallWrap {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  width: 100px;
+  height: 180px;
+  transform: translate(-50%, -460px);
+  animation: disco-wrap-drop 2.9s cubic-bezier(0.2, 0.75, 0.2, 1) forwards;
+  perspective: 960px;
+  transform-style: preserve-3d;
+}
+
+#discoBall {
+  transform-style: preserve-3d;
+  width: 100px;
+  height: 100px;
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  margin-left: -50px;
+  animation: rotateDiscoBall 5.2s linear infinite;
+  will-change: transform;
+}
+
+#discoBallLight {
+  width: 110px;
+  height: 110px;
+  position: absolute;
+  top: 50px;
+  left: 50%;
+  margin-left: -55px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, rgba(155, 222, 255, 0.35) 44%, rgba(255, 255, 255, 0) 74%);
+  opacity: 0.3;
+  filter: blur(16px);
+  animation: reflect 1.6s ease-in-out infinite;
+}
+
+#discoBallMiddle {
+  height: 100%;
+  width: 100%;
+  border-radius: 50%;
+  position: absolute;
+  background: radial-gradient(circle at 45% 30%, #eeeeee, #9f9f9f 48%, #4a4a4a 75%, #262626 100%);
+  animation: rotateDiscoBallMiddle 4.4s linear infinite;
+  transform-style: preserve-3d;
+  overflow: hidden;
+  box-shadow:
+    inset -18px -12px 24px rgba(0, 0, 0, 0.36),
+    inset 16px 10px 22px rgba(255, 255, 255, 0.14),
+    0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+#discoBallMiddle::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: disco-core-depth 2.2s ease-in-out infinite;
+}
+
+.square {
+  transform-style: preserve-3d;
+  position: absolute;
+  top: 50px;
+  left: 50px;
+  width: 0;
+  height: 0;
+}
+
+.square-tile {
+  display: block;
+  transform-origin: 0 0 0;
+  animation: reflect 2s linear infinite;
+  backface-visibility: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 2px rgba(255, 255, 255, 0.28);
+}
+
 .segment {
   display: flex;
   gap: 4px;

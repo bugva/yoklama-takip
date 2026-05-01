@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AbsenceRecord, AbsenceSource, AppData, AttendanceState, CalendarFilter, Course, ProgramView, ScheduleSlot } from '../types'
 import { ProgramViewToggle } from './ProgramViewToggle'
 import { WeeklyScheduleView } from './WeeklyScheduleView'
@@ -91,6 +91,7 @@ export function Dashboard({
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [updateReady, setUpdateReady] = useState(false)
   const [showReleaseNotes, setShowReleaseNotes] = useState(false)
+  const [showDisco, setShowDisco] = useState(false)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
   const conflicts = useMemo(() => findConflicts(data.scheduleSlots), [data.scheduleSlots])
@@ -275,6 +276,54 @@ export function Dashboard({
     if (!calendarFilter) return null
     return t(`filter.${calendarFilter}` as MsgKey)
   }, [calendarFilter])
+  const discoSquares = useMemo(() => {
+    const radius = 50
+    const squareSize = 6.5
+    const prec = 19.55
+    const fuzzy = 0.001
+    const inc = (Math.PI - fuzzy) / prec
+    let id = 0
+    const randomNumber = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
+    const randomColor = (type: 'bright' | 'any') => {
+      const c = type === 'bright' ? randomNumber(130, 255) : randomNumber(110, 190)
+      return `rgb(${c}, ${c}, ${c})`
+    }
+    const output: Array<{
+      id: number
+      x: number
+      y: number
+      z: number
+      i: number
+      t: number
+      color: string
+      delay: string
+      size: number
+    }> = []
+    for (let tVal = fuzzy; tVal < Math.PI; tVal += inc) {
+      const z = radius * Math.cos(tVal)
+      const currentRadius = Math.abs((radius * Math.cos(0) * Math.sin(tVal) - radius * Math.cos(Math.PI) * Math.sin(tVal)) / 2.5)
+      const circumference = Math.abs(2 * Math.PI * currentRadius)
+      const squaresThatFit = Math.max(1, Math.floor(circumference / squareSize))
+      const angleInc = (Math.PI * 2 - fuzzy) / squaresThatFit
+      for (let i = angleInc / 2 + fuzzy; i < Math.PI * 2; i += angleInc) {
+        const x = radius * Math.cos(i) * Math.sin(tVal)
+        const y = radius * Math.sin(i) * Math.sin(tVal)
+        const brightBand = tVal > 1.3 && tVal < 1.9
+        output.push({
+          id: id++,
+          x,
+          y,
+          z,
+          i,
+          t: tVal,
+          color: randomColor(brightBand ? 'bright' : 'any'),
+          delay: `${randomNumber(0, 20) / 10}s`,
+          size: squareSize,
+        })
+      }
+    }
+    return output
+  }, [])
 
   function saveAttendance(rec: AbsenceRecord) {
     const nextAbsences = upsertAttendanceForSlotDay(data.absences, rec)
@@ -569,6 +618,12 @@ export function Dashboard({
     setView(v)
   }
 
+  function triggerDiscoDrop() {
+    setShowDisco(true)
+    triggerHaptic('medium')
+    window.setTimeout(() => setShowDisco(false), 3400)
+  }
+
   function quickSetStateForSlot(
     slot: ScheduleSlot,
     day: Date,
@@ -649,8 +704,12 @@ export function Dashboard({
         <div className="top-bar-inner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <motion.h1 
             layout 
+            className="brand-title"
+            whileHover={{ scale: 1.03, rotate: -0.4 }}
+            whileTap={{ scale: 0.96, rotate: 0.4 }}
+            onClick={triggerDiscoDrop}
             style={{ 
-              fontSize: isScrolled ? '1.2rem' : '2rem',
+              fontSize: isScrolled ? '1rem' : '1.55rem',
               margin: isScrolled ? '0' : '0 0 6px 0',
               fontWeight: 800 
             }}
@@ -1269,6 +1328,41 @@ export function Dashboard({
               {t('month.close')}
             </button>
           </div>
+        </div>
+      )}
+
+      {showDisco && (
+        <div className="disco-overlay" aria-hidden>
+          <div id="discoBallWrap">
+            <div id="discoBallLight" />
+            <div id="discoBall">
+              <div id="discoBallMiddle">
+                {discoSquares.map((sq) => (
+                  <span
+                    key={sq.id}
+                    className="square"
+                    style={{ transform: `translateX(${sq.x}px) translateY(${sq.y}px) translateZ(${sq.z}px)` }}
+                  >
+                    <span
+                      className="square-tile"
+                      style={
+                        {
+                          width: `${sq.size}px`,
+                          height: `${sq.size}px`,
+                          transform: `rotate(${sq.i}rad) rotateY(${sq.t}rad)`,
+                          backgroundColor: sq.color,
+                          animationDelay: sq.delay,
+                        } as CSSProperties
+                      }
+                    />
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <span className="disco-beam b1" />
+          <span className="disco-beam b2" />
+          <span className="disco-beam b3" />
         </div>
       )}
 
