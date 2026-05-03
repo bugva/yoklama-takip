@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { ScheduleSlot } from '../types'
 import { t, WEEKDAY_SHORT } from '../i18n'
@@ -8,6 +8,9 @@ import { courseHue } from '../logic/courseAccent'
 
 type Props = {
   initialSlots: ScheduleSlot[]
+  /** Onboarding: akademik aralık (programdan önce seçildi). */
+  semesterStart?: string
+  semesterEnd?: string
   onComplete: (slots: ScheduleSlot[]) => void
   onCancel?: () => void
 }
@@ -48,7 +51,7 @@ function sameCourseName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase()
 }
 
-export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
+export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onComplete, onCancel }: Props) {
   const [slots, setSlots] = useState<ScheduleSlot[]>(initialSlots)
   /** Yerleştirme modunda aktif ders adı */
   const [placementCourse, setPlacementCourse] = useState<string | null>(null)
@@ -59,6 +62,15 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
   /** Tablo dışı satır düzenleme */
   const [orphanEdit, setOrphanEdit] = useState<ScheduleSlot | null>(null)
   const [orphanEndTime, setOrphanEndTime] = useState('')
+  const [showSetupGuide, setShowSetupGuide] = useState(false)
+  const [placementTouched, setPlacementTouched] = useState(false)
+  const [showPlacementIdleHint, setShowPlacementIdleHint] = useState(false)
+  /** Boş kutuya tıklanınca yerleştirilecek grid adresi (modal sonrası ilk slot). */
+  const [pendingCell, setPendingCell] = useState<{ dayOfWeek: number; startTime: string } | null>(null)
+  /** Dolu kutudan düzenleme moduna girildiğinde kullanıcıya gösterilir. */
+  const [placementEditHint, setPlacementEditHint] = useState(false)
+  const newCourseInputRef = useRef<HTMLInputElement>(null)
+  const onboardingFlow = !onCancel
 
   const catalog = useMemo(() => uniqueCourseCatalog(slots), [slots])
 
@@ -78,23 +90,51 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
     return gridSlots.find((s) => s.dayOfWeek === day && s.startTime === start)
   }
 
-  function openAddModal() {
+  function openAddModal(fromCell?: { dayOfWeek: number; startTime: string }) {
     setNewNameInput('')
     setPickExisting('')
+    setPendingCell(fromCell ?? null)
     setShowAddModal(true)
+  }
+
+  function closeAddModal() {
+    setShowAddModal(false)
+    setPendingCell(null)
   }
 
   function startPlacementFromModal() {
     const name = (pickExisting || newNameInput).trim()
     if (!name) return
+    const cellToFill = pendingCell
+    setPlacementEditHint(false)
     setPlacementCourse(name)
+    setPlacementTouched(false)
+    setShowPlacementIdleHint(false)
     setShowAddModal(false)
     setNewNameInput('')
     setPickExisting('')
+    setPendingCell(null)
+
+    if (cellToFill) {
+      const { dayOfWeek, startTime } = cellToFill
+      const slotEnd = defaultSlotEnd(SLOT_STARTS, startTime)
+      setSlots((prev) => {
+        const grid = prev.filter(
+          (s) => !s.isExtra && isStandardGridSlot(s, SLOT_STARTS) && s.dayOfWeek < 5,
+        )
+        const occupied = grid.some((s) => s.dayOfWeek === dayOfWeek && s.startTime === startTime)
+        if (occupied) return prev
+        return [...prev, regularSlot(dayOfWeek, startTime, slotEnd, name)]
+      })
+      setPlacementTouched(true)
+    }
   }
 
   function finishPlacement() {
     setPlacementCourse(null)
+    setPlacementTouched(false)
+    setShowPlacementIdleHint(false)
+    setPlacementEditHint(false)
   }
 
   function handleGridCell(dayOfWeek: number, startTime: string) {
@@ -113,20 +153,25 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
           const without = prev.filter((s) => !(s.dayOfWeek === dayOfWeek && s.startTime === startTime && !s.isExtra))
           return [...without, regularSlot(dayOfWeek, startTime, end, placementCourse)]
         })
+        setPlacementTouched(true)
+        setShowPlacementIdleHint(false)
         return
       }
       setSlots((prev) => [...prev, regularSlot(dayOfWeek, startTime, end, placementCourse)])
+      setPlacementTouched(true)
+      setShowPlacementIdleHint(false)
       return
     }
 
     if (existing) {
-      if (window.confirm(t('schedule.confirmRemoveCell'))) {
-        setSlots((prev) => prev.filter((s) => s.id !== existing.id))
-      }
+      setPlacementCourse(existing.courseName)
+      setPlacementEditHint(true)
+      setPlacementTouched(false)
+      setShowPlacementIdleHint(false)
       return
     }
 
-    window.alert(t('schedule.needAddFirst'))
+    openAddModal({ dayOfWeek, startTime })
   }
 
   function openOrphan(s: ScheduleSlot) {
@@ -152,35 +197,89 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
     setSlots((s) => s.filter((x) => x.id !== id))
   }
 
+  useEffect(() => {
+    if (!placementCourse || placementTouched) {
+      setShowPlacementIdleHint(false)
+      return
+    }
+    const id = window.setTimeout(() => setShowPlacementIdleHint(true), 4_000)
+    return () => window.clearTimeout(id)
+  }, [placementCourse, placementTouched])
+
+  useEffect(() => {
+    if (!showAddModal) return
+    const id = window.requestAnimationFrame(() => {
+      newCourseInputRef.current?.focus()
+      newCourseInputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [showAddModal])
+
   const effectiveNameForModal = (pickExisting || newNameInput).trim()
   const canStartPlace = effectiveNameForModal.length > 0
 
   return (
-    <div className="screen schedule-screen">
+    <div className="screen schedule-screen schedule-screen--sticky">
       <div className="screen-top-bar">
         <LanguageToggle />
       </div>
+      {onCancel && (
+        <div className="banner banner-info" role="status">
+          <p>{t('editMode.title')}</p>
+          <p className="muted small">{t('editMode.scheduleExplain')}</p>
+        </div>
+      )}
       <h1>{t('schedule.title')}</h1>
       <p className="lead">{t('schedule.lead')}</p>
-
-      {placementCourse && (
-        <div className="placement-banner card">
-          <p className="placement-banner-text">{t('schedule.placingBanner', { name: placementCourse })}</p>
-          <button type="button" className="btn primary" onClick={finishPlacement}>
-            {t('schedule.donePlacing')}
+      {!showSetupGuide && (
+        <div className="schedule-guide-open-row">
+          <button type="button" className="btn text sm" onClick={() => setShowSetupGuide(true)}>
+            {t('schedule.openSetupGuide')}
           </button>
         </div>
       )}
 
-      <div className="schedule-toolbar btn-row wrap">
-        {!placementCourse && (
-          <button type="button" className="btn secondary" onClick={openAddModal}>
-            {t('schedule.addCourseBtn')}
-          </button>
-        )}
-      </div>
+      {semesterStart && semesterEnd && (
+        <div className="card schedule-semester-hint">
+          <p className="muted small schedule-semester-hint-text">
+            {t('schedule.semesterRangeHint', { start: semesterStart, end: semesterEnd })}
+          </p>
+        </div>
+      )}
 
-      <div className={`sg-wrap ${placementCourse ? 'sg-wrap--placing' : ''}`}>
+      {showSetupGuide && (
+        <div className="guide-banner card">
+          <p className="guide-title">Program ekleme ogreticisi</p>
+          <p className="muted small">
+            {!placementCourse && !showAddModal && '«Yeni ders ekle» veya üstteki «Ders ekle» ile başlayın.'}
+            {showAddModal && "Ders adını yazıp «Yerleştirmeye başla»ya dokunun."}
+            {placementCourse && !showPlacementIdleHint && 'Ekranda dersinizin olduğu saatlere dokunun.'}
+            {placementCourse &&
+              showPlacementIdleHint &&
+              "Alttaki «Bitti» ile yerleştirmeyi bitirin; istediğiniz zaman «Yeni ders ekle» ile başka ders açabilirsiniz. Program tamamsa önce «Bitti», ardından «Yoklama kurallarıyla devam et» görünür."}
+          </p>
+          <button type="button" className="btn text sm" onClick={() => setShowSetupGuide(false)}>
+            Kapat
+          </button>
+        </div>
+      )}
+
+      {placementCourse && (
+        <div className="placement-banner card">
+          <p className="placement-banner-text">{t('schedule.placingBanner', { name: placementCourse })}</p>
+          <p className="muted small placement-banner-barhint">{t('schedule.donePlacingInBar')}</p>
+        </div>
+      )}
+
+      {placementCourse && placementEditHint && (
+        <div className="card placement-edit-banner" role="status">
+          <p className="placement-banner-text">{t('schedule.editPlacementBanner', { name: placementCourse })}</p>
+        </div>
+      )}
+
+      {placementCourse && <p className="hint">{t('schedule.devamBlockedHint')}</p>}
+
+      <div className={`sg-wrap ${placementCourse ? 'sg-wrap--placing' : ''} ${showSetupGuide && placementCourse ? 'demo-target' : ''}`}>
         <table className="sg-table">
           <thead>
             <tr>
@@ -271,28 +370,19 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
         </div>
       )}
 
-      <button
-        type="button"
-        className="btn primary wide"
-        disabled={slots.length === 0 || placementCourse !== null}
-        onClick={() => onComplete(slots)}
-      >
-        {onCancel ? t('schedule.save') : t('schedule.continueRules')}
-      </button>
-      {placementCourse && (
-        <p className="hint foot-hint">{t('schedule.devamBlockedHint')}</p>
-      )}
-      {onCancel && (
-        <button type="button" className="btn text wide" onClick={onCancel}>
-          {t('schedule.cancel')}
-        </button>
-      )}
-
       {showAddModal && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setShowAddModal(false)}>
+        <div className="modal-backdrop" role="presentation" onClick={closeAddModal}>
           <div className="modal sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
             <h2>{t('schedule.addCourseTitle')}</h2>
             <p className="hint">{t('schedule.addCourseIntro')}</p>
+            {pendingCell && (
+              <p className="hint">
+                {t('schedule.pendingCellHint', {
+                  day: ALL_DAYS[pendingCell.dayOfWeek]?.l ?? '',
+                  time: pendingCell.startTime,
+                })}
+              </p>
+            )}
 
             <div className="form-stack">
               {catalog.length > 0 && (
@@ -319,6 +409,7 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
               <label className="field">
                 <span>{t('schedule.newCourseNameLabel')}</span>
                 <input
+                  ref={newCourseInputRef}
                   className="input"
                   value={newNameInput}
                   onChange={(e) => {
@@ -335,13 +426,77 @@ export function ScheduleWizard({ initialSlots, onComplete, onCancel }: Props) {
               <button type="button" className="btn primary" disabled={!canStartPlace} onClick={startPlacementFromModal}>
                 {t('schedule.startPlace')}
               </button>
-              <button type="button" className="btn secondary" onClick={() => setShowAddModal(false)}>
+              <button type="button" className="btn secondary" onClick={closeAddModal}>
                 {t('schedule.modalClose')}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <nav className="schedule-sticky-bar" aria-label={t('schedule.stickyBarLabel')}>
+        <div className="schedule-sticky-inner btn-row wrap">
+          {onboardingFlow && placementCourse ? (
+            <>
+              <button type="button" className="btn primary schedule-sticky-done" onClick={finishPlacement}>
+                {t('schedule.donePlacing')}
+              </button>
+              <button type="button" className="btn secondary" onClick={() => openAddModal()}>
+                {t('schedule.stickyNewCourse')}
+              </button>
+            </>
+          ) : onboardingFlow && !placementCourse ? (
+            <>
+              <button type="button" className="btn primary" disabled={slots.length === 0} onClick={() => onComplete(slots)}>
+                {t('schedule.continueRules')}
+              </button>
+              <button type="button" className="btn secondary" onClick={() => openAddModal()}>
+                {t('schedule.stickyNewCourse')}
+              </button>
+            </>
+          ) : placementCourse ? (
+            <>
+              <button type="button" className="btn primary schedule-sticky-done" onClick={finishPlacement}>
+                {t('schedule.donePlacing')}
+              </button>
+              <button type="button" className="btn secondary" onClick={() => openAddModal()}>
+                {t('schedule.addCourseBtn')}
+              </button>
+              <button type="button" className="btn secondary" disabled title={t('schedule.devamBlockedHint')}>
+                {onCancel ? t('schedule.save') : t('schedule.continueRules')}
+              </button>
+              {onCancel && (
+                <button type="button" className="btn text" onClick={onCancel}>
+                  {t('schedule.cancel')}
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`btn secondary ${showSetupGuide && !showAddModal ? 'demo-target' : ''}`}
+                onClick={() => openAddModal()}
+              >
+                {t('schedule.addCourseBtn')}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={slots.length === 0}
+                onClick={() => onComplete(slots)}
+              >
+                {onCancel ? t('schedule.save') : t('schedule.continueRules')}
+              </button>
+              {onCancel && (
+                <button type="button" className="btn text" onClick={onCancel}>
+                  {t('schedule.cancel')}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </nav>
 
       {orphanEdit && (
         <div className="modal-backdrop" role="presentation" onClick={() => setOrphanEdit(null)}>

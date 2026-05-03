@@ -68,6 +68,8 @@ export type AppData = {
   semesterStart?: string
   /** Akademik takvim bitiş tarihi YYYY-MM-DD */
   semesterEnd?: string
+  /** Kurulumda «geçmiş devamsızlık girişini şimdilik geç» seçildiyse true; zımni «gittim» rapor/takvimde uygulanmaz (eskisi gibi). */
+  pastAbsenceSkipped?: boolean
 }
 
 export type ProgramView = 'today' | 'week' | 'month' | 'report' | 'settings'

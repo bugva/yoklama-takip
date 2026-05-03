@@ -1,5 +1,6 @@
 import type { AbsenceRecord, AttendanceState, Course, ScheduleSlot } from '../types'
 import { findCourseByName } from './coursesFromSchedule'
+import { isHoliday } from './holidays'
 import { toLocalYmd } from './dateUtils'
 
 export function absencesForCourse(absences: AbsenceRecord[], courseId: string): AbsenceRecord[] {
@@ -25,6 +26,30 @@ export function calendarSlotMarkedOnDate(
   courses: Course[],
 ): boolean {
   return calendarSlotStateOnDate(absences, slot, calendarDate, courses) != null
+}
+
+/**
+ * Takvim chip / mini slot rengi.
+ * Geçmiş+bugün: kayıt yok → görsel olarak katıldı (present).
+ * Resmi/dini tatil: kayıt yok → iptal (ders yok varsayımı); kullanıcı sonradan işaretleyebilir.
+ * Gelecek tatil günü: kayıt yok → iptal gösterimi.
+ * Diğer gelecek günler: kayıt yok → null.
+ */
+export function displayAttendanceStateForCalendar(
+  raw: AttendanceState | null,
+  isFuture: boolean,
+  opts?: { suppressImplicitPresent?: boolean },
+  ymd?: string,
+): AttendanceState | null {
+  const holiday = ymd ? isHoliday(ymd) : false
+
+  if (isFuture) {
+    if (holiday && raw === null) return 'cancelled'
+    return raw
+  }
+  if (opts?.suppressImplicitPresent && raw === null) return null
+  if (holiday && raw === null) return 'cancelled'
+  return raw ?? 'present'
 }
 
 export function calendarSlotStateOnDate(

@@ -1,6 +1,9 @@
 import type { AbsenceRecord, AttendanceState, Course, ScheduleSlot } from '../types'
+import { calendarSlotStateOnDate } from './absenceRecords'
+import { isHoliday } from './holidays'
 import { absenceCountForCourse, maxAllowedAbsences } from './limits'
 import { mondayFirstDayIndex, toLocalYmd, dayLabelMonday0 } from './dateUtils'
+import { slotsForDate } from './slotsForDate'
 
 export type CourseReport = {
   course: Course
@@ -30,15 +33,101 @@ function weekKey(ymd: string): string {
   return `${d.getFullYear()}-H${String(week).padStart(2, '0')}`
 }
 
-export function courseReports(courses: Course[], absences: AbsenceRecord[]): CourseReport[] {
+/**
+ * Program + takvim üzerinden geçmiş günlerdeki her slot oturumu için durum sayımı.
+ * Kayıt yokluğu geçmişte «gittim» (present) kabul edilir; bugün için kayıt yoksa oturum rapora dahil edilmez.
+ */
+function countSessionOutcomesForCourse(
+  course: Course,
+  allCourses: Course[],
+  absences: AbsenceRecord[],
+  slots: ScheduleSlot[],
+  semesterStart?: string,
+  semesterEnd?: string,
+): { absent: number; unsure: number; present: number; cancelled: number } {
+  const todayYmd = toLocalYmd(new Date())
+  const startDate = semesterStart
+    ? new Date(semesterStart + 'T00:00:00')
+    : (() => {
+        const d = new Date()
+        d.setDate(d.getDate() - 14 * 7)
+        return d
+      })()
+  const endDate = semesterEnd
+    ? new Date(semesterEnd + 'T00:00:00')
+    : (() => {
+        const d = new Date(startDate)
+        d.setDate(d.getDate() + 14 * 7)
+        return d
+      })()
+
+  let absent = 0
+  let unsure = 0
+  let present = 0
+  let cancelled = 0
+
+  const cur = new Date(startDate)
+  cur.setHours(0, 0, 0, 0)
+  const end = new Date(endDate)
+  end.setHours(0, 0, 0, 0)
+  const cn = course.name.trim().toLowerCase()
+
+  while (cur <= end) {
+    const ymd = toLocalYmd(cur)
+    if (ymd > todayYmd) break
+
+    const daySlots = slotsForDate(slots, cur).filter((s) => s.courseName.trim().toLowerCase() === cn)
+
+    for (const slot of daySlots) {
+      const raw = calendarSlotStateOnDate(absences, slot, cur, allCourses)
+      if (ymd === todayYmd && raw === null && !isHoliday(ymd)) continue
+      let eff: AttendanceState
+      if (ymd < todayYmd) {
+        eff = raw === null && isHoliday(ymd) ? 'cancelled' : (raw ?? 'present')
+      } else {
+        eff = raw === null && isHoliday(ymd) ? 'cancelled' : (raw as AttendanceState)
+      }
+      if (eff === null || eff === undefined) continue
+      if (eff === 'absent') absent++
+      else if (eff === 'unsure') unsure++
+      else if (eff === 'present') present++
+      else if (eff === 'cancelled') cancelled++
+    }
+
+    cur.setDate(cur.getDate() + 1)
+  }
+
+  return { absent, unsure, present, cancelled }
+}
+
+/** Geçmiş girişi atlanmış kullanıcı: yalnızca kayıtlı satırlar (zımni gittim yok). */
+function legacyRecordOnlyCounts(
+  course: Course,
+  absences: AbsenceRecord[],
+): { absent: number; unsure: number; present: number; cancelled: number } {
+  const records = absences.filter((a) => a.courseId === course.id)
+  const absent = records.filter((a) => a.attendanceState === 'absent' && a.countTowardsLimit !== false).length
+  const unsure = records.filter((a) => a.attendanceState === 'unsure' && a.countTowardsLimit !== false).length
+  const present = records.filter((a) => a.attendanceState === 'present').length
+  const cancelled = records.filter((a) => a.attendanceState === 'cancelled').length
+  return { absent, unsure, present, cancelled }
+}
+
+export function courseReports(
+  courses: Course[],
+  absences: AbsenceRecord[],
+  slots: ScheduleSlot[],
+  semesterStart?: string,
+  semesterEnd?: string,
+  pastAbsenceSkipped?: boolean,
+): CourseReport[] {
   return courses
     .filter((c) => c.attendanceRequired)
     .map((course) => {
-      const records = absences.filter((a) => a.courseId === course.id)
-      const absent = records.filter((a) => a.attendanceState === 'absent' && a.countTowardsLimit !== false).length
-      const unsure = records.filter((a) => a.attendanceState === 'unsure' && a.countTowardsLimit !== false).length
-      const present = records.filter((a) => a.attendanceState === 'present' || a.countTowardsLimit === false && a.attendanceState !== 'cancelled').length
-      const cancelled = records.filter((a) => a.attendanceState === 'cancelled').length
+      const { absent, unsure, present, cancelled } =
+        pastAbsenceSkipped === true
+          ? legacyRecordOnlyCounts(course, absences)
+          : countSessionOutcomesForCourse(course, courses, absences, slots, semesterStart, semesterEnd)
       const total = absent + unsure + present + cancelled
       const used = absenceCountForCourse(course.id, absences)
       const max = maxAllowedAbsences(course)
@@ -194,17 +283,34 @@ function topAbsenceDayOfWeek(absences: AbsenceRecord[], courseId: string): strin
 
 export function courseDetailStats(
   course: Course,
+  allCourses: Course[],
   absences: AbsenceRecord[],
   allSlots: ScheduleSlot[],
   semesterStart?: string,
   semesterEnd?: string,
+  pastAbsenceSkipped?: boolean,
 ): CourseDetailStats {
-  const records = absences.filter((a) => a.courseId === course.id)
-  const attended = records.filter((a) => a.attendanceState === 'present').length
-  const missed = records.filter((a) => a.attendanceState === 'absent' && a.countTowardsLimit !== false).length
-  const unsureCount = records.filter((a) => a.attendanceState === 'unsure').length
-  const cancelledCount = records.filter((a) => a.attendanceState === 'cancelled').length
-  const totalRecords = records.length
+  let attended: number
+  let missed: number
+  let unsureCount: number
+  let cancelledCount: number
+  let totalRecords: number
+
+  if (pastAbsenceSkipped === true) {
+    const records = absences.filter((a) => a.courseId === course.id)
+    attended = records.filter((a) => a.attendanceState === 'present').length
+    missed = records.filter((a) => a.attendanceState === 'absent' && a.countTowardsLimit !== false).length
+    unsureCount = records.filter((a) => a.attendanceState === 'unsure').length
+    cancelledCount = records.filter((a) => a.attendanceState === 'cancelled').length
+    totalRecords = records.length
+  } else {
+    const counts = countSessionOutcomesForCourse(course, allCourses, absences, allSlots, semesterStart, semesterEnd)
+    attended = counts.present
+    missed = counts.absent
+    unsureCount = counts.unsure
+    cancelledCount = counts.cancelled
+    totalRecords = attended + missed + unsureCount + cancelledCount
+  }
 
   const { past, future, weeklyCount } = countPastFutureClasses(allSlots, course.name, semesterStart, semesterEnd)
   const unmarked = Math.max(0, past - totalRecords)

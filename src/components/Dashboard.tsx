@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import type { ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AbsenceRecord, AbsenceSource, AppData, AttendanceState, CalendarFilter, Course, ProgramView, ScheduleSlot } from '../types'
 import { ProgramViewToggle } from './ProgramViewToggle'
 import { WeeklyScheduleView } from './WeeklyScheduleView'
@@ -13,14 +15,15 @@ import {
 } from '../logic/limits'
 import { AddExtraLessonModal } from './AddExtraLessonModal'
 import { t, type MsgKey } from '../i18n'
-import { findCourseByName } from '../logic/coursesFromSchedule'
-import { calendarSlotStateOnDate, upsertAttendanceForSlotDay } from '../logic/absenceRecords'
+import { findCourseByName, sameCourseName, uniqueCourseNamesFromSlots } from '../logic/coursesFromSchedule'
+import { calendarSlotStateOnDate, displayAttendanceStateForCalendar, upsertAttendanceForSlotDay } from '../logic/absenceRecords'
 import { readClassPromptAnswer, writeClassPromptAnswer } from '../logic/classPrompt'
 import { minutesSinceMidnight, toLocalYmd } from '../logic/dateUtils'
 import { ReportView } from './ReportView'
 import { findConflicts } from '../logic/conflicts'
-import { todayHoliday } from '../logic/holidays'
+import { getHoliday } from '../logic/holidays'
 import { triggerHaptic, scaleBounce } from '../lib/haptics'
+import { useQuickTapOrLongPress } from '../lib/useQuickTapOrLongPress'
 import { useTheme } from '../lib/useTheme'
 import {
   notifNavigatePath,
@@ -31,6 +34,51 @@ import {
 import { NotifCheckInModal } from './NotifCheckInModal'
 import { motion } from 'framer-motion'
 import { useLanguage } from '../LanguageContext'
+
+function TodayCourseTapSurface({
+  layoutId,
+  quickTapEnabled,
+  onQuickTap,
+  onOpenFullModal,
+  className,
+  children,
+}: {
+  layoutId: string
+  quickTapEnabled: boolean
+  onQuickTap: () => void
+  onOpenFullModal: () => void
+  className: string
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLButtonElement>(null)
+  const handlers = useQuickTapOrLongPress({
+    enabled: quickTapEnabled,
+    onShortPress: () => {
+      if (!quickTapEnabled) {
+        const el = ref.current
+        if (el) scaleBounce(el)
+        triggerHaptic('light')
+        onOpenFullModal()
+        return
+      }
+      onQuickTap()
+    },
+    onLongPress: onOpenFullModal,
+  })
+
+  return (
+    <motion.button
+      ref={ref}
+      layoutId={layoutId}
+      transition={{ type: 'spring', stiffness: 120, damping: 25, mass: 1 }}
+      type="button"
+      className={className}
+      {...handlers}
+    >
+      {children}
+    </motion.button>
+  )
+}
 
 type Props = {
   data: AppData
@@ -57,11 +105,17 @@ export function Dashboard({
   onRestoreAutoBackup,
   lastAutoBackupAt,
 }: Props) {
+  /** Canlı sekme öğreticisi — şimdilik kapalı; tekrar açmak için true yapın. */
+  const ENABLE_LIVE_USAGE_TUTORIAL = false
   const QUICK_TAP_KEY = 'quick-tap-marking-enabled'
+  const DASH_TUTORIAL_KEY = 'dashboard-live-tutorial-dismissed-v1'
+  const tutorialViews: ProgramView[] = ['today', 'week', 'month', 'report', 'settings']
+  const tutorialLabels = ['Bugün görünümü', 'Haftalık görünüm', 'Aylık görünüm', 'Rapor görünümü', 'Ayarlar görünümü']
   const [view, setView] = useState<ProgramView>('today')
   const [weekOffset, setWeekOffset] = useState(0)
   const [shortcutHandled, setShortcutHandled] = useState(false)
   const [isScrolled, setIsScrolled] = useState(false)
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
   const { theme, setTheme } = useTheme()
   const { lang, setLang } = useLanguage()
 
@@ -70,6 +124,7 @@ export function Dashboard({
     window.addEventListener('scroll', handleScroll, { passive: true })
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
+
   const [showExtra, setShowExtra] = useState(false)
   const [clock, setClock] = useState(() => new Date())
   const [todayModalSlot, setTodayModalSlot] = useState<ScheduleSlot | null>(null)
@@ -79,7 +134,8 @@ export function Dashboard({
     source: 'calendar_week' | 'calendar_month'
   } | null>(null)
   const [calNote, setCalNote] = useState('')
-  const [calendarFilter, setCalendarFilter] = useState<CalendarFilter | null>(null)
+  const [calendarFilters, setCalendarFilters] = useState<CalendarFilter[]>([])
+  const [calendarCourseFilter, setCalendarCourseFilter] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [holidayDismissed, setHolidayDismissed] = useState(false)
   const [reminders, setReminders] = useState<string[]>([])
@@ -92,10 +148,38 @@ export function Dashboard({
   const [updateReady, setUpdateReady] = useState(false)
   const [showReleaseNotes, setShowReleaseNotes] = useState(false)
   const [showDisco, setShowDisco] = useState(false)
+  const [showUsageTutorial, setShowUsageTutorial] = useState(() => {
+    if (!ENABLE_LIVE_USAGE_TUTORIAL) return false
+    try {
+      return localStorage.getItem(DASH_TUTORIAL_KEY) !== '1'
+    } catch {
+      return false
+    }
+  })
+  const [usageTutorialStep, setUsageTutorialStep] = useState(0)
+  const [usageTutorialPlaying, setUsageTutorialPlaying] = useState(true)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
+  useEffect(() => {
+    if (!resetConfirmOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setResetConfirmOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [resetConfirmOpen])
+
+  const scheduleCourseNames = useMemo(() => uniqueCourseNamesFromSlots(data.scheduleSlots), [data.scheduleSlots])
+
+  useEffect(() => {
+    if (!calendarCourseFilter) return
+    if (!scheduleCourseNames.some((n) => sameCourseName(n, calendarCourseFilter))) {
+      setCalendarCourseFilter(null)
+    }
+  }, [scheduleCourseNames, calendarCourseFilter])
+
   const conflicts = useMemo(() => findConflicts(data.scheduleSlots), [data.scheduleSlots])
-  const holiday = useMemo(() => todayHoliday(), [])
+  const holiday = useMemo(() => getHoliday(toLocalYmd(clock)), [clock])
   const courseByName = useMemo(() => {
     const map = new Map<string, Course>()
     for (const c of data.courses) map.set(c.name.trim().toLowerCase(), c)
@@ -272,23 +356,18 @@ export function Dashboard({
     [todaySlots, data.courses, clock],
   )
 
-  const activeFilterLabel = useMemo(() => {
-    if (!calendarFilter) return null
-    return t(`filter.${calendarFilter}` as MsgKey)
-  }, [calendarFilter])
   const discoSquares = useMemo(() => {
     const radius = 50
     const squareSize = 6.5
     const prec = 19.55
     const fuzzy = 0.001
     const inc = (Math.PI - fuzzy) / prec
-    let id = 0
     const randomNumber = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
     const randomColor = (type: 'bright' | 'any') => {
       const c = type === 'bright' ? randomNumber(130, 255) : randomNumber(110, 190)
-      return `rgb(${c}, ${c}, ${c})`
+      return `rgb(${c},${c},${c})`
     }
-    const output: Array<{
+    const out: Array<{
       id: number
       x: number
       y: number
@@ -299,6 +378,7 @@ export function Dashboard({
       delay: string
       size: number
     }> = []
+    let id = 0
     for (let tVal = fuzzy; tVal < Math.PI; tVal += inc) {
       const z = radius * Math.cos(tVal)
       const currentRadius = Math.abs((radius * Math.cos(0) * Math.sin(tVal) - radius * Math.cos(Math.PI) * Math.sin(tVal)) / 2.5)
@@ -308,8 +388,8 @@ export function Dashboard({
       for (let i = angleInc / 2 + fuzzy; i < Math.PI * 2; i += angleInc) {
         const x = radius * Math.cos(i) * Math.sin(tVal)
         const y = radius * Math.sin(i) * Math.sin(tVal)
-        const brightBand = tVal > 1.3 && tVal < 1.9
-        output.push({
+        const brightBand = (tVal > 1.3 && tVal < 1.9) || (tVal < -1.3 && tVal > -1.9)
+        out.push({
           id: id++,
           x,
           y,
@@ -322,7 +402,7 @@ export function Dashboard({
         })
       }
     }
-    return output
+    return out
   }, [])
 
   function saveAttendance(rec: AbsenceRecord) {
@@ -409,7 +489,7 @@ export function Dashboard({
     const todayYmd = toLocalYmd(clock)
     const targetYmd = toLocalYmd(calendarDate)
     if (targetYmd > todayYmd) {
-      window.alert(t('absence.futureNotAllowed'))
+      setReminders((prev) => [...prev, t('absence.futureNotAllowed')])
       return
     }
     const course = findCourseByName(data.courses, slot.courseName)
@@ -455,7 +535,7 @@ export function Dashboard({
     setCalModal(null)
   }
 
-  function setTodayAttendance(slot: ScheduleSlot, state: 'present' | 'absent') {
+  function setTodayAttendance(slot: ScheduleSlot, state: 'present' | 'absent' | 'unsure') {
     const course = findCourseByName(data.courses, slot.courseName)
     if (!course?.attendanceRequired) {
       window.alert(t('absence.calendarNoTrackable'))
@@ -471,7 +551,7 @@ export function Dashboard({
       })
     ) {
       const sid = slot.id
-      writeClassPromptAnswer(sid, clock, state)
+      writeClassPromptAnswer(sid, clock, state === 'present' ? 'present' : state === 'absent' ? 'absent' : 'unsure')
       setClock(new Date())
       setTodayModalSlot(null)
     }
@@ -614,14 +694,25 @@ export function Dashboard({
   }
 
   function handleTabChange(v: ProgramView) {
+    if (showUsageTutorial && usageTutorialPlaying) return
     triggerHaptic('light')
     setView(v)
   }
 
-  function triggerDiscoDrop() {
+  function closeUsageTutorial() {
+    setShowUsageTutorial(false)
+    setUsageTutorialPlaying(false)
+    try {
+      localStorage.setItem(DASH_TUTORIAL_KEY, '1')
+    } catch {
+      // no-op
+    }
+  }
+
+  function triggerDiscoTop() {
     setShowDisco(true)
     triggerHaptic('medium')
-    window.setTimeout(() => setShowDisco(false), 3400)
+    window.setTimeout(() => setShowDisco(false), 2_000)
   }
 
   function quickSetStateForSlot(
@@ -659,18 +750,24 @@ export function Dashboard({
     setClock(new Date())
   }
 
-  function handleQuickTapCycle(
-    slot: ScheduleSlot,
-    day: Date,
-    source: 'quick' | 'calendar_week' | 'calendar_month',
-    includeUnsure: boolean,
-  ) {
+  function handleQuickTapCycle(slot: ScheduleSlot, day: Date, source: 'quick' | 'calendar_week' | 'calendar_month') {
+    const todayYmd = toLocalYmd(clock)
+    if (toLocalYmd(day) > todayYmd) {
+      setReminders((prev) => [...prev, t('absence.futureNotAllowed')])
+      return
+    }
+
     const current = calendarSlotStateOnDate(data.absences, slot, day, data.courses)
-    let next: 'present' | 'absent' | 'unsure' | null
-    if (current === 'present') next = 'absent'
-    else if (current === 'absent') next = includeUnsure ? 'unsure' : null
-    else if (current === 'unsure') next = null
-    else next = 'present'
+    let next: AttendanceState | null
+    if (current === null || current === 'present' || current === 'cancelled') {
+      next = 'absent'
+    } else if (current === 'absent') {
+      next = 'unsure'
+    } else if (current === 'unsure') {
+      next = null
+    } else {
+      next = null
+    }
     if (next === null) {
       clearQuickStateForSlotDay(slot, day)
       return
@@ -697,6 +794,24 @@ export function Dashboard({
   }
 
   const backupText = lastAutoBackupAt ? new Date(lastAutoBackupAt).toLocaleString() : t('settings.backupNever')
+  const discoMount =
+    typeof document !== 'undefined' && document.body ? document.body : null
+  const activeUsageView = tutorialViews[usageTutorialStep] ?? 'today'
+
+  useEffect(() => {
+    if (!showUsageTutorial || !usageTutorialPlaying) return
+    setView(activeUsageView)
+    const id = window.setTimeout(() => {
+      setUsageTutorialStep((prev) => {
+        if (prev >= tutorialViews.length - 1) {
+          setUsageTutorialPlaying(false)
+          return prev
+        }
+        return prev + 1
+      })
+    }, 1300)
+    return () => window.clearTimeout(id)
+  }, [showUsageTutorial, usageTutorialPlaying, activeUsageView])
 
   return (
     <div className="screen home">
@@ -704,10 +819,9 @@ export function Dashboard({
         <div className="top-bar-inner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <motion.h1 
             layout 
-            className="brand-title"
             whileHover={{ scale: 1.03, rotate: -0.4 }}
             whileTap={{ scale: 0.96, rotate: 0.4 }}
-            onClick={triggerDiscoDrop}
+            onClick={triggerDiscoTop}
             style={{ 
               fontSize: isScrolled ? '1rem' : '1.55rem',
               margin: isScrolled ? '0' : '0 0 6px 0',
@@ -717,34 +831,44 @@ export function Dashboard({
             {t('dashboard.title')}
           </motion.h1>
         </div>
-        <ProgramViewToggle value={view} onChange={handleTabChange} />
+        <ProgramViewToggle
+          value={view}
+          onChange={handleTabChange}
+          demoTarget={showUsageTutorial ? activeUsageView : null}
+        />
       </header>
 
-      <div className="dashboard-shortcuts" role="group" aria-label="Dashboard kisayollari">
-        <button
-          type="button"
-          className={`btn sm dashboard-shortcut-btn ${view === 'today' ? 'dashboard-shortcut-active' : 'secondary'}`}
-          aria-pressed={view === 'today'}
-          onClick={() => {
-            triggerHaptic('light')
-            setView('today')
-          }}
-        >
-          {t('shortcuts.today')}
-        </button>
-        <button
-          type="button"
-          className={`btn sm dashboard-shortcut-btn ${pendingCheckinCount > 0 ? 'primary' : 'secondary'}`}
-          aria-label={`${t('shortcuts.checkin')} (${pendingCheckinCount})`}
-          onClick={() => {
-            triggerHaptic('light')
-            openFirstPendingCheckin()
-          }}
-        >
-          {t('shortcuts.checkin')}
-          {pendingCheckinCount > 0 ? <span className="dashboard-shortcut-pill">{pendingCheckinCount}</span> : null}
-        </button>
-      </div>
+      {showUsageTutorial && (
+        <div className="guide-banner card">
+          <p className="guide-title">Kullanim ogreticisi: sekmeler otomatik geziliyor</p>
+          <p className="muted small">Su an: {tutorialLabels[usageTutorialStep]}. Sonra bu adimlari senin dokunuslarinla kullanabilirsin.</p>
+          <div className="btn-row wrap">
+            <button type="button" className="btn secondary sm" onClick={() => setUsageTutorialPlaying((p) => !p)}>
+              {usageTutorialPlaying ? 'Durdur' : 'Devam et'}
+            </button>
+            <button type="button" className="btn text sm" onClick={closeUsageTutorial}>
+              Kapat
+            </button>
+          </div>
+        </div>
+      )}
+
+      {view === 'today' && (
+        <div className="dashboard-shortcuts" role="group" aria-label="Dashboard kisayollari">
+          <button
+            type="button"
+            className={`btn sm dashboard-shortcut-btn ${pendingCheckinCount > 0 ? 'primary' : 'secondary'}`}
+            aria-label={`${t('shortcuts.checkin')} (${pendingCheckinCount})`}
+            onClick={() => {
+              triggerHaptic('light')
+              openFirstPendingCheckin()
+            }}
+          >
+            {t('shortcuts.checkin')}
+            {pendingCheckinCount > 0 ? <span className="dashboard-shortcut-pill">{pendingCheckinCount}</span> : null}
+          </button>
+        </div>
+      )}
 
       {reminders.length > 0 && (
         <div className="banner banner-info" role="status">
@@ -839,40 +963,48 @@ export function Dashboard({
               </div>
             )}
           </div>
+          {quickTapEnabled && todaySlots.length > 0 ? (
+            <p className="muted small today-longpress-hint">{t('dashboard.longPressHint')}</p>
+          ) : null}
           {todaySlots.length === 0 ? (
             <p className="muted">{t('dashboard.todayEmpty')}</p>
           ) : (
             <div className="today-grid">
               {todaySlots.map((s) => {
-                const answer = readClassPromptAnswer(s.id, clock)
+                const ymd = toLocalYmd(clock)
+                const prompt = readClassPromptAnswer(s.id, clock)
+                const raw = calendarSlotStateOnDate(data.absences, s, clock, data.courses)
+                const implied = displayAttendanceStateForCalendar(raw, false, {
+                  suppressImplicitPresent: data.pastAbsenceSkipped === true,
+                }, ymd)
+                const explicitPrompt = prompt === 'present' || prompt === 'absent' || prompt === 'unsure'
+                const pillState: 'present' | 'absent' | 'unsure' | 'cancelled' | null = explicitPrompt
+                  ? prompt
+                  : implied === 'cancelled' || implied === 'absent' || implied === 'unsure'
+                    ? implied
+                    : null
                 const nowMin = clock.getHours() * 60 + clock.getMinutes()
                 const startMin = minutesSinceMidnight(s.startTime)
                 const endMin = minutesSinceMidnight(s.endTime)
                 const isActive = nowMin >= startMin && nowMin < endMin
                 const isPast = nowMin >= endMin
-                const stateClass = answer
-                  ? `today-card-${answer}`
-                  : isActive
-                    ? 'today-card-active'
-                    : isPast
-                      ? 'today-card-past'
-                      : ''
+                const stateClass = (() => {
+                  if (prompt === 'present' || prompt === 'absent' || prompt === 'unsure' || prompt === 'dismissed') {
+                    return `today-card-${prompt}`
+                  }
+                  if (implied === 'cancelled') return 'today-card-cancelled'
+                  if (implied === 'absent') return 'today-card-absent'
+                  if (implied === 'unsure') return 'today-card-unsure'
+                  return isActive ? 'today-card-active' : isPast ? 'today-card-past' : ''
+                })()
                 return (
-                  <motion.button
-                    layoutId={`card-${s.id}`}
-                    transition={{ type: 'spring', stiffness: 120, damping: 25, mass: 1 }}
+                  <TodayCourseTapSurface
                     key={s.id}
-                    type="button"
+                    layoutId={`card-${s.id}`}
+                    quickTapEnabled={quickTapEnabled}
+                    onQuickTap={() => handleQuickTapCycle(s, clock, 'quick')}
+                    onOpenFullModal={() => setTodayModalSlot(s)}
                     className={`today-card ${stateClass}`}
-                    onClick={(e) => {
-                      if (quickTapEnabled) {
-                        handleQuickTapCycle(s, clock, 'quick', false)
-                        return
-                      }
-                      scaleBounce(e.currentTarget)
-                      triggerHaptic('light')
-                      setTodayModalSlot(s)
-                    }}
                   >
                     <span className="today-card-sheen" aria-hidden />
                     <div className="today-card-core">
@@ -893,17 +1025,19 @@ export function Dashboard({
                       ) : null}
                     </div>
                     <div className="today-card-trail">
-                      {answer ? (
-                        <span className={`today-state-pill pill-${answer}`}>{t(`absence.todayState.${answer}` as MsgKey)}</span>
+                      {pillState ? (
+                        <span className={`today-state-pill pill-${pillState}`}>
+                          {t(`absence.todayState.${pillState}` as MsgKey)}
+                        </span>
                       ) : (
                         <span className="today-tap-hint today-tap-inline">{t('absence.todayTapToSet')}</span>
                       )}
-                      {isActive && !answer ? <span className="today-pulse-dot" /> : null}
+                      {isActive && !pillState ? <span className="today-pulse-dot" /> : null}
                     </div>
                     <span className="today-chevron" aria-hidden>
                       ›
                     </span>
-                  </motion.button>
+                  </TodayCourseTapSurface>
                 )
               })}
             </div>
@@ -922,26 +1056,59 @@ export function Dashboard({
             >
               {t('filter.toggle')}
             </button>
-            {activeFilterLabel && (
-              <span className="filter-active-pill" role="status">
-                {activeFilterLabel}
+            {calendarCourseFilter && (
+              <span className="filter-active-pill" role="status" title={calendarCourseFilter}>
+                {calendarCourseFilter.length > 24 ? `${calendarCourseFilter.slice(0, 23)}…` : calendarCourseFilter}
               </span>
             )}
+            {calendarFilters.map((f) => (
+              <span key={f} className="filter-active-pill" role="status">
+                {t(`filter.${f}` as MsgKey)}
+              </span>
+            ))}
           </div>
           {showFilters && (
-            <div className="filter-bar">
-              {(['absent', 'unsure', 'risk', 'cancelled', 'holiday'] as CalendarFilter[]).map((f) => (
+            <>
+              <div className="filter-bar filter-bar--courses">
                 <button
-                  key={f}
                   type="button"
-                  className={`btn sm filter-chip ${calendarFilter === f ? 'active' : ''}`}
-                  aria-pressed={calendarFilter === f}
-                  onClick={() => setCalendarFilter((prev) => (prev === f ? null : f))}
+                  className={`btn sm filter-chip ${calendarCourseFilter === null ? 'active' : ''}`}
+                  aria-pressed={calendarCourseFilter === null}
+                  onClick={() => setCalendarCourseFilter(null)}
                 >
-                  {t(`filter.${f}` as MsgKey)}
+                  {t('filter.allCourses')}
                 </button>
-              ))}
-            </div>
+                {scheduleCourseNames.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`btn sm filter-chip ${calendarCourseFilter === name ? 'active' : ''}`}
+                    aria-pressed={calendarCourseFilter === name}
+                    title={name.length > 32 ? name : undefined}
+                    onClick={() => setCalendarCourseFilter((prev) => (prev === name ? null : name))}
+                  >
+                    {name.length > 28 ? `${name.slice(0, 27)}…` : name}
+                  </button>
+                ))}
+              </div>
+              <div className="filter-bar">
+                {(['absent', 'unsure', 'risk', 'cancelled', 'holiday'] as CalendarFilter[]).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={`btn sm filter-chip ${calendarFilters.includes(f) ? 'active' : ''}`}
+                    aria-pressed={calendarFilters.includes(f)}
+                    onClick={() =>
+                      setCalendarFilters((prev) =>
+                        prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f],
+                      )
+                    }
+                  >
+                    {t(`filter.${f}` as MsgKey)}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
         </>
       )}
@@ -960,10 +1127,12 @@ export function Dashboard({
             slots={data.scheduleSlots}
             absences={data.absences}
             courses={data.courses}
-            calendarFilter={calendarFilter}
+            suppressImplicitPresent={data.pastAbsenceSkipped === true}
+            calendarFilters={calendarFilters}
+            courseNameFilter={calendarCourseFilter}
             quickTapEnabled={quickTapEnabled}
             onQuickTapMark={(slot, calendarDate) =>
-              handleQuickTapCycle(slot, calendarDate, 'calendar_week', false)
+              handleQuickTapCycle(slot, calendarDate, 'calendar_week')
             }
             onRequestCalendarAbsence={(slot, calendarDate) =>
               requestCalendarAbsence(slot, calendarDate, 'calendar_week')
@@ -983,17 +1152,28 @@ export function Dashboard({
             slots={data.scheduleSlots}
             absences={data.absences}
             courses={data.courses}
-            calendarFilter={calendarFilter}
+            suppressImplicitPresent={data.pastAbsenceSkipped === true}
+            calendarFilters={calendarFilters}
+            courseNameFilter={calendarCourseFilter}
             quickTapEnabled={quickTapEnabled}
             onQuickTapMark={(slot, day) =>
-              handleQuickTapCycle(slot, day, 'calendar_month', true)
+              handleQuickTapCycle(slot, day, 'calendar_month')
             }
             onRequestCalendarAbsence={(slot, day) => requestCalendarAbsence(slot, day, 'calendar_month')}
           />
         </motion.section>
       )}
 
-      {view === 'report' && <ReportView courses={data.courses} absences={data.absences} slots={data.scheduleSlots} semesterStart={data.semesterStart} semesterEnd={data.semesterEnd} />}
+      {view === 'report' && (
+        <ReportView
+          courses={data.courses}
+          absences={data.absences}
+          slots={data.scheduleSlots}
+          semesterStart={data.semesterStart}
+          semesterEnd={data.semesterEnd}
+          pastAbsenceSkipped={data.pastAbsenceSkipped}
+        />
+      )}
 
       {view === 'settings' && (
         <section className="card settings-view">
@@ -1058,6 +1238,11 @@ export function Dashboard({
             <p className="muted small" style={{ marginTop: 8 }}>
               {t('settings.tapModeHint')}
             </p>
+            {quickTapEnabled ? (
+              <p className="muted small" style={{ marginTop: 6 }}>
+                {t('settings.tapModeLongPressHint')}
+              </p>
+            ) : null}
           </div>
           <div className="settings-notif-block">
             <p className="muted small">{t('settings.notifLead')}</p>
@@ -1118,7 +1303,7 @@ export function Dashboard({
               >
                 {t('settings.backupRestore')}
               </button>
-              <button type="button" className="btn text danger" onClick={onResetAllData}>
+              <button type="button" className="btn text danger" onClick={() => setResetConfirmOpen(true)}>
                 {t('footer.reset')}
               </button>
             </div>
@@ -1198,6 +1383,40 @@ export function Dashboard({
         <AddExtraLessonModal courses={data.courses} onClose={() => setShowExtra(false)} onSave={onExtraSave} />
       )}
 
+      {resetConfirmOpen && (
+        <div
+          className="modal-backdrop modal-layer-high"
+          role="presentation"
+          onClick={() => setResetConfirmOpen(false)}
+        >
+          <div
+            className="modal sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="reset-confirm-title">{t('settings.resetModalTitle')}</h2>
+            <p className="muted">{t('app.resetConfirm')}</p>
+            <div className="btn-row wrap" style={{ marginTop: 16 }}>
+              <button type="button" className="btn secondary" onClick={() => setResetConfirmOpen(false)}>
+                {t('settings.resetModalCancel')}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => {
+                  setResetConfirmOpen(false)
+                  onResetAllData()
+                }}
+              >
+                {t('settings.resetModalConfirmBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {calModal && (
         <div className="modal-backdrop modal-layer-high" role="presentation" onClick={() => setCalModal(null)}>
           <div className="modal sheet" role="dialog" aria-modal="true" aria-label={t('absence.calendarAskTitle')} onClick={(e) => e.stopPropagation()}>
@@ -1205,6 +1424,16 @@ export function Dashboard({
             <p className="muted small">
               {toLocalYmd(calModal.date)} · {calModal.slot.startTime}–{calModal.slot.endTime}
             </p>
+            <label className="field calendar-note-field">
+              <span className="muted small">{t('absence.calendarNoteLabel')}</span>
+              <textarea
+                className="input"
+                rows={2}
+                value={calNote}
+                onChange={(e) => setCalNote(e.target.value)}
+                placeholder={t('absence.calendarNotePlaceholder')}
+              />
+            </label>
             <div className="instant-state-grid">
               <button type="button" className="instant-btn instant-present" onClick={() => submitCalendarState('present')}>
                 <span className="instant-icon">✓</span>
@@ -1297,11 +1526,15 @@ export function Dashboard({
             <div className="instant-state-grid">
               <button type="button" className="instant-btn instant-present" onClick={() => setTodayAttendance(todayModalSlot, 'present')}>
                 <span className="instant-icon">✓</span>
-                <span className="instant-label">{t('absence.todayWent')}</span>
+                <span className="instant-label">{t('absence.calendarStatePresent')}</span>
               </button>
               <button type="button" className="instant-btn instant-absent" onClick={() => setTodayAttendance(todayModalSlot, 'absent')}>
                 <span className="instant-icon">✗</span>
-                <span className="instant-label">{t('absence.todayAbsent')}</span>
+                <span className="instant-label">{t('absence.calendarStateAbsent')}</span>
+              </button>
+              <button type="button" className="instant-btn instant-unsure" onClick={() => setTodayAttendance(todayModalSlot, 'unsure')}>
+                <span className="instant-icon">?</span>
+                <span className="instant-label">{t('absence.calendarStateUnsure')}</span>
               </button>
               <button type="button" className="instant-btn instant-cancelled" onClick={() => setTodayCancelled(todayModalSlot)}>
                 <span className="instant-icon">—</span>
@@ -1331,40 +1564,42 @@ export function Dashboard({
         </div>
       )}
 
-      {showDisco && (
-        <div className="disco-overlay" aria-hidden>
-          <div id="discoBallWrap">
-            <div id="discoBallLight" />
-            <div id="discoBall">
-              <div id="discoBallMiddle">
-                {discoSquares.map((sq) => (
-                  <span
-                    key={sq.id}
-                    className="square"
-                    style={{ transform: `translateX(${sq.x}px) translateY(${sq.y}px) translateZ(${sq.z}px)` }}
-                  >
-                    <span
-                      className="square-tile"
-                      style={
-                        {
+      {showDisco &&
+        discoMount &&
+        createPortal(
+          <div className="disco-overlay" aria-hidden>
+            <div className="disco-stage">
+              <div className="stage-beam stage-beam-left" />
+              <div className="stage-beam stage-beam-center" />
+              <div className="stage-beam stage-beam-right" />
+              <div className="disco-rig">
+                <div id="discoBallLight" />
+                <div id="discoBall">
+                  <div id="discoBallMiddle" />
+                  {discoSquares.map((sq) => (
+                    <div
+                      key={sq.id}
+                      className="square"
+                      style={{ transform: `translateX(${sq.x}px) translateY(${sq.y}px) translateZ(${sq.z}px)` }}
+                    >
+                      <div
+                        className="square-tile"
+                        style={{
                           width: `${sq.size}px`,
                           height: `${sq.size}px`,
                           transform: `rotate(${sq.i}rad) rotateY(${sq.t}rad)`,
                           backgroundColor: sq.color,
                           animationDelay: sq.delay,
-                        } as CSSProperties
-                      }
-                    />
-                  </span>
-                ))}
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-          <span className="disco-beam b1" />
-          <span className="disco-beam b2" />
-          <span className="disco-beam b3" />
-        </div>
-      )}
+          </div>,
+          discoMount,
+        )}
 
     </div>
   )

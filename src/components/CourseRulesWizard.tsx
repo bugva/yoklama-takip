@@ -80,6 +80,12 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
         <div className="screen-top-bar">
           <LanguageToggle />
         </div>
+        {onCancel && (
+          <div className="banner banner-info" role="status">
+            <p>{t('editMode.title')}</p>
+            <p className="muted small">{t('editMode.rulesExplain')}</p>
+          </div>
+        )}
         <p>{t('rules.noCourses')}</p>
         <button type="button" className="btn primary" onClick={() => onComplete([])}>
           {t('rules.home')}
@@ -89,10 +95,16 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
   }
 
   return (
-    <div className="screen">
+    <div className="screen rules-screen rules-screen--sticky">
       <div className="screen-top-bar">
         <LanguageToggle />
       </div>
+      {onCancel && (
+        <div className="banner banner-info" role="status">
+          <p>{t('editMode.title')}</p>
+          <p className="muted small">{t('editMode.rulesExplain')}</p>
+        </div>
+      )}
       <h1>{t('rules.title')}</h1>
       <p className="step">
         {index + 1} / {names.length}
@@ -100,7 +112,7 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
       <h2 className="course-title">{currentName}</h2>
       <p className="lead">{t('rules.lead')}</p>
 
-      <div className="card form-stack">
+      <div className="card form-stack rules-form-card">
         <label className="check-line">
           <input
             type="checkbox"
@@ -163,27 +175,29 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
         )}
       </div>
 
-      <div className="btn-row">
-        {index > 0 && (
-          <button type="button" className="btn secondary" onClick={() => setIndex((i) => i - 1)}>
-            {t('rules.prev')}
-          </button>
-        )}
-        {index < names.length - 1 ? (
-          <button type="button" className="btn primary" onClick={() => setIndex((i) => i + 1)}>
-            {t('rules.next')}
-          </button>
-        ) : (
-          <button type="button" className="btn primary" onClick={finish}>
-            {t('rules.finish')}
-          </button>
-        )}
-        {onCancel && (
-          <button type="button" className="btn text" onClick={onCancel}>
-            {t('rules.cancel')}
-          </button>
-        )}
-      </div>
+      <nav className="rules-sticky-bar" aria-label={t('rules.stickyBarLabel')}>
+        <div className="rules-sticky-inner btn-row wrap">
+          {index > 0 && (
+            <button type="button" className="btn secondary" onClick={() => setIndex((i) => i - 1)}>
+              {t('rules.prev')}
+            </button>
+          )}
+          {index < names.length - 1 ? (
+            <button type="button" className="btn primary" onClick={() => setIndex((i) => i + 1)}>
+              {t('rules.next')}
+            </button>
+          ) : (
+            <button type="button" className="btn primary" onClick={finish}>
+              {t('rules.finish')}
+            </button>
+          )}
+          {onCancel && (
+            <button type="button" className="btn text" onClick={onCancel}>
+              {t('rules.cancel')}
+            </button>
+          )}
+        </div>
+      </nav>
     </div>
   )
 }

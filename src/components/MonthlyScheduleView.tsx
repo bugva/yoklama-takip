@@ -1,18 +1,22 @@
 import { useState } from 'react'
-import { calendarSlotStateOnDate } from '../logic/absenceRecords'
+import { calendarSlotStateOnDate, displayAttendanceStateForCalendar } from '../logic/absenceRecords'
 import { mondayFirstDayIndex, toLocalYmd } from '../logic/dateUtils'
 import { slotsForDate } from '../logic/slotsForDate'
 import type { AbsenceRecord, CalendarFilter, Course, ScheduleSlot } from '../types'
 import { MONTH_NAMES, t, WEEKDAY_SHORT } from '../i18n'
-import { isRiskZone, maxAllowedAbsences, absenceCountForCourse, unknownAbsenceCount } from '../logic/limits'
-import { findCourseByName } from '../logic/coursesFromSchedule'
-import { isHoliday } from '../logic/holidays'
+import { matchesAnyCalendarFilter } from '../logic/calendarFilterMatch'
+import { slotMatchesCourseFilter } from '../logic/coursesFromSchedule'
+import { getHoliday } from '../logic/holidays'
+import { CalendarQuickSlotButton } from './CalendarQuickSlotButton'
 
 type Props = {
   slots: ScheduleSlot[]
   absences: AbsenceRecord[]
   courses: Course[]
-  calendarFilter?: CalendarFilter | null
+  suppressImplicitPresent?: boolean
+  calendarFilters?: CalendarFilter[]
+  /** Tek dersle sınırla; null = programdaki tüm dersler */
+  courseNameFilter?: string | null
   onRequestCalendarAbsence: (slot: ScheduleSlot, day: Date) => void
   quickTapEnabled?: boolean
   onQuickTapMark?: (slot: ScheduleSlot, day: Date) => void
@@ -40,7 +44,9 @@ export function MonthlyScheduleView({
   slots,
   absences,
   courses,
-  calendarFilter = null,
+  suppressImplicitPresent = false,
+  calendarFilters = [],
+  courseNameFilter = null,
   onRequestCalendarAbsence,
   quickTapEnabled = false,
   onQuickTapMark,
@@ -61,8 +67,12 @@ export function MonthlyScheduleView({
     setSelected(null)
   }
 
-  const detailSlots = selected ? slotsForDate(slots, selected) : []
+  const detailSlots = selected
+    ? slotsForDate(slots, selected).filter((s) => slotMatchesCourseFilter(s.courseName, courseNameFilter))
+    : []
   const todayYmd = toLocalYmd(new Date())
+  const selectedYmd = selected != null ? toLocalYmd(selected) : null
+  const selectedHoliday = selectedYmd != null ? getHoliday(selectedYmd) : null
 
   return (
     <div className="month-wrap">
@@ -91,49 +101,58 @@ export function MonthlyScheduleView({
         {Array.from({ length: total }, (_, i) => {
           const dayNum = i + 1
           const d = new Date(cursor.getFullYear(), cursor.getMonth(), dayNum)
-          const list = slotsForDate(slots, d)
-          const today = toLocalYmd(new Date()) === toLocalYmd(d)
+          const list = slotsForDate(slots, d).filter((s) => slotMatchesCourseFilter(s.courseName, courseNameFilter))
+          const dayYmd = toLocalYmd(d)
+          const filteredForChips = list.filter((s) => {
+            const state = calendarSlotStateOnDate(absences, s, d, courses)
+            return matchesAnyCalendarFilter(calendarFilters, {
+              slot: s,
+              dayYmd,
+              state,
+              absences,
+              courses,
+            })
+          })
+          const today = todayYmd === dayYmd
+          const isFutureDay = dayYmd > todayYmd
+          const holidayMeta = getHoliday(dayYmd)
           return (
             <button
               key={dayNum}
               type="button"
-              className={`cal-cell cal-cell-btn ${today ? 'today' : ''}`}
+              className={`cal-cell cal-cell-btn ${today ? 'today' : ''}${holidayMeta ? ' cal-cell--holiday' : ''}`}
               onClick={() => setSelected(d)}
+              title={holidayMeta ? holidayMeta.name : undefined}
             >
-              <div className="cal-daynum">{dayNum}</div>
+              <div className="cal-daynum-wrap">
+                <div className="cal-daynum">
+                  {dayNum}
+                </div>
+                {holidayMeta ? (
+                  <span className="cal-holiday-label">{t('holiday.badgeShort')}</span>
+                ) : null}
+              </div>
               <div className="cal-chips">
-                {list
-                  .filter((s) => {
-                    if (!calendarFilter) return true
-                    const state = calendarSlotStateOnDate(absences, s, d, courses)
-                    if (calendarFilter === 'risk') {
-                      const course = findCourseByName(courses, s.courseName)
-                      if (!course) return false
-                      const max = maxAllowedAbsences(course)
-                      const used = absenceCountForCourse(course.id, absences)
-                      const unk = unknownAbsenceCount(course.id, absences)
-                      return isRiskZone(used, max, unk)
-                    }
-                    if (calendarFilter === 'unsure') return state === 'unsure'
-                    if (calendarFilter === 'absent') return state === 'absent'
-                    if (calendarFilter === 'cancelled') return state === 'cancelled'
-                    if (calendarFilter === 'holiday') return isHoliday(toLocalYmd(d))
-                    return true
-                  })
-                  .slice(0, 3)
-                  .map((s) => {
-                    const state = calendarSlotStateOnDate(absences, s, d, courses)
-                    return (
-                      <span
-                        key={s.id}
-                        className={`chip${state ? ` chip-state-${state}` : ''}`}
-                        title={`${s.startTime} ${s.courseName}`}
-                      >
-                        {s.courseName.length > 11 ? `${s.courseName.slice(0, 10)}…` : s.courseName}
-                      </span>
-                    )
-                  })}
-                {list.length > 3 && <span className="chip more">+{list.length - 3}</span>}
+                {filteredForChips.slice(0, 3).map((s) => {
+                  const state = calendarSlotStateOnDate(absences, s, d, courses)
+                  const displayState = displayAttendanceStateForCalendar(state, isFutureDay, {
+                    suppressImplicitPresent,
+                  }, dayYmd)
+                  const chipClass =
+                    displayState == null ? 'chip chip-state-neutral' : `chip chip-state-${displayState}`
+                  const chipTitle =
+                    displayState != null
+                      ? `${s.startTime} ${s.courseName} · ${t(`absence.todayState.${displayState}` as Parameters<typeof t>[0])}`
+                      : `${s.startTime} ${s.courseName}`
+                  return (
+                    <span key={s.id} className={chipClass} title={chipTitle}>
+                      {s.courseName.length > 11 ? `${s.courseName.slice(0, 10)}…` : s.courseName}
+                    </span>
+                  )
+                })}
+                {filteredForChips.length > 3 && (
+                  <span className="chip more">+{filteredForChips.length - 3}</span>
+                )}
               </div>
             </button>
           )
@@ -143,41 +162,53 @@ export function MonthlyScheduleView({
       {selected && (
         <div className="modal-backdrop" role="presentation" onClick={() => setSelected(null)}>
           <div className="modal sheet day-sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
-            <h2 id="day-detail">{formatDayTitle(selected)}</h2>
+            <h2 id="day-detail">
+              {formatDayTitle(selected)}
+              {selectedHoliday ? (
+                <span className="day-sheet-holiday muted small">
+                  {' · '}
+                  {selectedHoliday.name}
+                </span>
+              ) : null}
+            </h2>
+            {selectedYmd != null && selectedYmd > todayYmd && (
+              <div className="banner banner-info day-sheet-future-banner" role="status">
+                <p className="muted small">{t('absence.futureAttendanceExplain')}</p>
+              </div>
+            )}
             {detailSlots.length === 0 ? (
               <p className="muted">{t('month.dayDetailEmpty')}</p>
             ) : (
               <div className="month-detail-grid">
                 {detailSlots.map((s) => {
-                  const state = calendarSlotStateOnDate(absences, s, selected, courses)
-                  const isFuture = toLocalYmd(selected) > todayYmd
+                  const rawState = calendarSlotStateOnDate(absences, s, selected, courses)
+                  const isFuture = selectedYmd != null && selectedYmd > todayYmd
+                  const displayState = displayAttendanceStateForCalendar(rawState, isFuture, {
+                    suppressImplicitPresent,
+                  }, selectedYmd ?? undefined)
                   return (
-                    <button
+                    <CalendarQuickSlotButton
                       key={s.id}
-                      type="button"
-                      className={`month-detail-card${state ? ` month-card-${state}` : ''}${isFuture ? ' slot-disabled' : ''}`}
-                      disabled={isFuture}
-                      onClick={() => {
-                        if (quickTapEnabled && onQuickTapMark) {
-                          onQuickTapMark(s, selected)
-                          return
-                        }
+                      className={`month-detail-card${displayState ? ` month-card-${displayState}` : ''}${isFuture ? ' slot-disabled' : ''}`}
+                      quickTapEnabled={quickTapEnabled}
+                      onQuickTapMark={
+                        onQuickTapMark ? () => onQuickTapMark(s, selected) : undefined
+                      }
+                      onOpenFullPicker={() => {
                         onRequestCalendarAbsence(s, selected)
                         setSelected(null)
                       }}
+                      aria-label={`${s.courseName} ${s.startTime}`}
                     >
                       <span className="month-detail-name">{s.courseName}</span>
                       <span className="month-detail-time">{s.startTime}–{s.endTime}</span>
-                      {state && (
-                        <span className={`today-state-pill pill-${state}`}>
-                          {t(`absence.todayState.${state}` as Parameters<typeof t>[0])}
+                      {!isFuture && displayState != null && (
+                        <span className={`today-state-pill pill-${displayState}`}>
+                          {t(`absence.todayState.${displayState}` as Parameters<typeof t>[0])}
                         </span>
                       )}
-                      {!state && !isFuture && (
-                        <span className="today-tap-hint">{t('absence.todayTapToSet')}</span>
-                      )}
                       {s.isExtra && <span className="badge sm">{t('schedule.badgeExtra')}</span>}
-                    </button>
+                    </CalendarQuickSlotButton>
                   )
                 })}
               </div>

@@ -6,19 +6,27 @@ import { CourseRulesWizard } from './components/CourseRulesWizard'
 import { SemesterDatePicker } from './components/SemesterDatePicker'
 import { Dashboard } from './components/Dashboard'
 import { OnboardingExtrasPanel } from './components/OnboardingExtrasPanel'
+import { PastAbsencePrompt } from './components/PastAbsencePrompt'
+import { PastAbsenceEntry } from './components/PastAbsenceEntry'
 import { hasStoredLanguagePreference, t, type AppLang } from './i18n'
 import { useLanguage } from './LanguageContext'
 import './app.css'
 
+type OnboardingSemester = { semesterStart: string; semesterEnd: string }
+
 type Phase =
-  | { id: 'onboard-schedule' }
-  | { id: 'onboard-rules'; slots: AppData['scheduleSlots'] }
-  | { id: 'onboard-extras'; slots: AppData['scheduleSlots']; courses: Course[] }
-  | { id: 'onboard-semester'; slots: AppData['scheduleSlots']; courses: Course[] }
+  | { id: 'onboard-academic' }
+  | { id: 'onboard-schedule' } & OnboardingSemester
+  | { id: 'onboard-rules'; slots: AppData['scheduleSlots'] } & OnboardingSemester
+  | { id: 'onboard-extras'; slots: AppData['scheduleSlots']; courses: Course[] } & OnboardingSemester
+  | { id: 'onboard-past-prompt'; slots: AppData['scheduleSlots']; courses: Course[] } & OnboardingSemester
+  | { id: 'onboard-past-entry'; data: AppData }
   | { id: 'home'; data: AppData }
   | { id: 'edit-schedule'; data: AppData }
   | { id: 'edit-rules'; data: AppData }
   | { id: 'edit-semester'; data: AppData }
+
+const ENABLE_ONBOARD_EXTRAS = false
 
 function migrateSlots(raw: AppData): AppData {
   const scheduleSlots = raw.scheduleSlots.map((s) => ({
@@ -33,7 +41,7 @@ function migrateSlots(raw: AppData): AppData {
 
 function initialPhase(): Phase {
   const raw = loadData()
-  if (!raw || raw.scheduleSlots.length === 0) return { id: 'onboard-schedule' }
+  if (!raw || raw.scheduleSlots.length === 0) return { id: 'onboard-academic' }
   return { id: 'home', data: migrateSlots(raw) }
 }
 
@@ -71,13 +79,33 @@ export default function App() {
     )
   }
 
+  if (phase.id === 'onboard-academic') {
+    return withLangGate(
+      <SemesterDatePicker
+        initialStart=""
+        initialEnd=""
+        submitLabelKey="semester.continueToProgram"
+        onComplete={(start, end) => {
+          setPhase({ id: 'onboard-schedule', semesterStart: start, semesterEnd: end })
+        }}
+      />,
+    )
+  }
+
   if (phase.id === 'onboard-schedule') {
     return withLangGate(
       <ScheduleWizard
         initialSlots={[]}
+        semesterStart={phase.semesterStart}
+        semesterEnd={phase.semesterEnd}
         onComplete={(slots) => {
           if (slots.length === 0) return
-          setPhase({ id: 'onboard-rules', slots })
+          setPhase({
+            id: 'onboard-rules',
+            slots,
+            semesterStart: phase.semesterStart,
+            semesterEnd: phase.semesterEnd,
+          })
         }}
       />,
     )
@@ -89,7 +117,70 @@ export default function App() {
         slots={phase.slots}
         initialCourses={[]}
         onComplete={(courses) => {
-          setPhase({ id: 'onboard-extras', slots: phase.slots, courses })
+          if (ENABLE_ONBOARD_EXTRAS) {
+            setPhase({
+              id: 'onboard-extras',
+              slots: phase.slots,
+              courses,
+              semesterStart: phase.semesterStart,
+              semesterEnd: phase.semesterEnd,
+            })
+            return
+          }
+          setPhase({
+            id: 'onboard-past-prompt',
+            slots: phase.slots,
+            courses,
+            semesterStart: phase.semesterStart,
+            semesterEnd: phase.semesterEnd,
+          })
+        }}
+      />,
+    )
+  }
+
+  if (phase.id === 'onboard-past-prompt') {
+    return withLangGate(
+      <PastAbsencePrompt
+        onYes={() =>
+          setPhase({
+            id: 'onboard-past-entry',
+            data: {
+              version: 2,
+              scheduleSlots: phase.slots,
+              courses: phase.courses,
+              absences: [],
+              semesterStart: phase.semesterStart,
+              semesterEnd: phase.semesterEnd,
+              pastAbsenceSkipped: false,
+            },
+          })
+        }
+        onNo={() => {
+          const data: AppData = {
+            version: 2,
+            scheduleSlots: phase.slots,
+            courses: phase.courses,
+            absences: [],
+            semesterStart: phase.semesterStart,
+            semesterEnd: phase.semesterEnd,
+            pastAbsenceSkipped: true,
+          }
+          saveData(data)
+          setPhase({ id: 'home', data })
+        }}
+      />,
+    )
+  }
+
+  if (phase.id === 'onboard-past-entry') {
+    return withLangGate(
+      <PastAbsenceEntry
+        initialData={phase.data}
+        onComplete={(data) => {
+          const next = { ...data, pastAbsenceSkipped: false as const }
+          saveData(next)
+          setPhase({ id: 'home', data: next })
         }}
       />,
     )
@@ -99,29 +190,24 @@ export default function App() {
     return withLangGate(
       <OnboardingExtrasPanel
         initialSlots={phase.slots}
-        onComplete={(slots) => setPhase({ id: 'onboard-semester', slots, courses: phase.courses })}
-        onSkip={() => setPhase({ id: 'onboard-semester', slots: phase.slots, courses: phase.courses })}
-      />,
-    )
-  }
-
-  if (phase.id === 'onboard-semester') {
-    return withLangGate(
-      <SemesterDatePicker
-        initialStart=""
-        initialEnd=""
-        onComplete={(start, end) => {
-          const data: AppData = {
-            version: 2,
-            scheduleSlots: phase.slots,
+        onComplete={(slots) =>
+          setPhase({
+            id: 'onboard-past-prompt',
+            slots,
             courses: phase.courses,
-            absences: [],
-            semesterStart: start || undefined,
-            semesterEnd: end || undefined,
-          }
-          saveData(data)
-          setPhase({ id: 'home', data })
-        }}
+            semesterStart: phase.semesterStart,
+            semesterEnd: phase.semesterEnd,
+          })
+        }
+        onSkip={() =>
+          setPhase({
+            id: 'onboard-past-prompt',
+            slots: phase.slots,
+            courses: phase.courses,
+            semesterStart: phase.semesterStart,
+            semesterEnd: phase.semesterEnd,
+          })
+        }
       />,
     )
   }
@@ -130,6 +216,8 @@ export default function App() {
     return withLangGate(
       <ScheduleWizard
         initialSlots={phase.data.scheduleSlots}
+        semesterStart={phase.data.semesterStart}
+        semesterEnd={phase.data.semesterEnd}
         onCancel={() => setPhase({ id: 'home', data: phase.data })}
         onComplete={(slots) => {
           const data = { ...phase.data, scheduleSlots: slots }
@@ -210,11 +298,9 @@ export default function App() {
             return true
           }}
           onResetAllData={() => {
-            if (confirm(t('app.resetConfirm'))) {
-              const cleared = emptyData()
-              saveData(cleared)
-              setPhase({ id: 'onboard-schedule' })
-            }
+            const cleared = emptyData()
+            saveData(cleared)
+            setPhase({ id: 'onboard-academic' })
           }}
           lastAutoBackupAt={lastAutoBackupAt()}
         />

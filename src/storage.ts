@@ -98,11 +98,19 @@ export function normalizeAppData(parsed: unknown): AppData | null {
     }
   }
 
+  const semesterStart = typeof p.semesterStart === 'string' ? p.semesterStart : undefined
+  const semesterEnd = typeof p.semesterEnd === 'string' ? p.semesterEnd : undefined
+  const pastAbsenceSkipped =
+    typeof p.pastAbsenceSkipped === 'boolean' ? p.pastAbsenceSkipped : undefined
+
   return {
     version: CURRENT_VERSION,
     scheduleSlots: p.scheduleSlots as AppData['scheduleSlots'],
     courses: p.courses as AppData['courses'],
     absences,
+    ...(semesterStart ? { semesterStart } : {}),
+    ...(semesterEnd ? { semesterEnd } : {}),
+    ...(pastAbsenceSkipped !== undefined ? { pastAbsenceSkipped } : {}),
   }
 }
 

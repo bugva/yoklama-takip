@@ -5,6 +5,28 @@ export type Holiday = {
   name: string
 }
 
+/** 2024 — resmi takvim (Ramazan/Kurban Diyanet / telafi günleri dahil yaygın liste) */
+const TURKEY_PUBLIC_HOLIDAYS_2024: Holiday[] = [
+  { date: '2024-01-01', name: 'Yılbaşı' },
+  { date: '2024-04-08', name: 'Ramazan Bayramı arifesi / tatil' },
+  { date: '2024-04-09', name: 'Ramazan Bayramı 1. gün' },
+  { date: '2024-04-10', name: 'Ramazan Bayramı 2. gün' },
+  { date: '2024-04-11', name: 'Ramazan Bayramı 3. gün' },
+  { date: '2024-04-12', name: 'Ramazan Bayramı tatili' },
+  { date: '2024-04-23', name: 'Ulusal Egemenlik ve Çocuk Bayramı' },
+  { date: '2024-05-01', name: 'Emek ve Dayanışma Günü' },
+  { date: '2024-05-19', name: 'Atatürk\'ü Anma, Gençlik ve Spor Bayramı' },
+  { date: '2024-06-16', name: 'Kurban Bayramı 1. gün' },
+  { date: '2024-06-17', name: 'Kurban Bayramı 2. gün' },
+  { date: '2024-06-18', name: 'Kurban Bayramı 3. gün' },
+  { date: '2024-06-19', name: 'Kurban Bayramı 4. gün' },
+  { date: '2024-06-20', name: 'Kurban Bayramı tatili' },
+  { date: '2024-06-21', name: 'Kurban Bayramı tatili' },
+  { date: '2024-07-15', name: 'Demokrasi ve Milli Birlik Günü' },
+  { date: '2024-08-30', name: 'Zafer Bayramı' },
+  { date: '2024-10-29', name: 'Cumhuriyet Bayramı' },
+]
+
 const TURKEY_PUBLIC_HOLIDAYS_2025: Holiday[] = [
   { date: '2025-01-01', name: 'Yılbaşı' },
   { date: '2025-03-30', name: 'Ramazan Bayramı 1. gün' },
@@ -39,7 +61,11 @@ const TURKEY_PUBLIC_HOLIDAYS_2026: Holiday[] = [
   { date: '2026-10-29', name: 'Cumhuriyet Bayramı' },
 ]
 
-const ALL_HOLIDAYS = [...TURKEY_PUBLIC_HOLIDAYS_2025, ...TURKEY_PUBLIC_HOLIDAYS_2026]
+const ALL_HOLIDAYS = [
+  ...TURKEY_PUBLIC_HOLIDAYS_2024,
+  ...TURKEY_PUBLIC_HOLIDAYS_2025,
+  ...TURKEY_PUBLIC_HOLIDAYS_2026,
+]
 
 export function getHoliday(ymd: string): Holiday | undefined {
   return ALL_HOLIDAYS.find((h) => h.date === ymd)

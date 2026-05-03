@@ -1,11 +1,12 @@
 import { slotsByWeekDays } from '../logic/calendarViews'
-import { calendarSlotStateOnDate } from '../logic/absenceRecords'
+import { calendarSlotStateOnDate, displayAttendanceStateForCalendar } from '../logic/absenceRecords'
 import { toLocalYmd } from '../logic/dateUtils'
 import type { AbsenceRecord, CalendarFilter, Course, ScheduleSlot } from '../types'
 import { t, WEEKDAY_SHORT } from '../i18n'
-import { isRiskZone, maxAllowedAbsences, absenceCountForCourse, unknownAbsenceCount } from '../logic/limits'
-import { findCourseByName } from '../logic/coursesFromSchedule'
-import { isHoliday } from '../logic/holidays'
+import { matchesAnyCalendarFilter } from '../logic/calendarFilterMatch'
+import { slotMatchesCourseFilter } from '../logic/coursesFromSchedule'
+import { getHoliday } from '../logic/holidays'
+import { CalendarQuickSlotButton } from './CalendarQuickSlotButton'
 
 type Props = {
   anchorDate: Date
@@ -14,7 +15,10 @@ type Props = {
   slots: ScheduleSlot[]
   absences: AbsenceRecord[]
   courses: Course[]
-  calendarFilter?: CalendarFilter | null
+  /** Geçmiş giriş atlandıysa kayıtsız geçmiş günler yeşil «gittim» göstermez. */
+  suppressImplicitPresent?: boolean
+  calendarFilters?: CalendarFilter[]
+  courseNameFilter?: string | null
   onRequestCalendarAbsence: (slot: ScheduleSlot, calendarDate: Date) => void
   quickTapEnabled?: boolean
   onQuickTapMark?: (slot: ScheduleSlot, calendarDate: Date) => void
@@ -27,7 +31,9 @@ export function WeeklyScheduleView({
   slots,
   absences,
   courses,
-  calendarFilter = null,
+  suppressImplicitPresent = false,
+  calendarFilters = [],
+  courseNameFilter = null,
   onRequestCalendarAbsence,
   quickTapEnabled = false,
   onQuickTapMark,
@@ -56,47 +62,65 @@ export function WeeklyScheduleView({
         </button>
       </div>
       <div className="week-days">
-        {days.map(({ date, slots: daySlots }, i) => (
-          <section key={toLocalKey(date)} className="day-col">
+        {days.map(({ date, slots: daySlotsRaw }, i) => {
+          const daySlots = courseNameFilter
+            ? daySlotsRaw.filter((s) => slotMatchesCourseFilter(s.courseName, courseNameFilter))
+            : daySlotsRaw
+          const dayYmd = toLocalYmd(date)
+          const holidayMeta = getHoliday(dayYmd)
+          return (
+          <section
+            key={toLocalKey(date)}
+            className={`day-col${holidayMeta ? ' day-col--holiday' : ''}`}
+          >
             <header className="day-head">
-              <span className="day-name">{labels[i] ?? '?'}</span>
-              <span className="day-date muted">
-                {date.getDate()}.{date.getMonth() + 1}
-              </span>
+              <div className="day-head-row">
+                <span className="day-name">{labels[i] ?? '?'}</span>
+                <span className="day-date muted">
+                  {date.getDate()}.{date.getMonth() + 1}
+                </span>
+              </div>
+              {holidayMeta ? (
+                <span className="week-day-holiday-badge" title={holidayMeta.name}>
+                  {t('holiday.badgeShort')}
+                </span>
+              ) : null}
             </header>
+            {dayYmd > todayYmd && (
+              <p className="muted small week-future-hint" role="note">
+                {t('absence.futureDayColumnHint')}
+              </p>
+            )}
             {daySlots.length === 0 ? (
               <p className="muted small">{t('week.noClass')}</p>
             ) : (
               <ul className="mini-slots">
                 {daySlots.map((s) => {
                   const state = calendarSlotStateOnDate(absences, s, date, courses)
-                  const isFuture = toLocalYmd(date) > todayYmd
-                  if (calendarFilter) {
-                    const course = findCourseByName(courses, s.courseName)
-                    if (calendarFilter === 'risk' && course) {
-                      const max = maxAllowedAbsences(course)
-                      const used = absenceCountForCourse(course.id, absences)
-                      const unk = unknownAbsenceCount(course.id, absences)
-                      if (!isRiskZone(used, max, unk)) return null
-                    }
-                    if (calendarFilter === 'unsure' && state !== 'unsure') return null
-                    if (calendarFilter === 'absent' && state !== 'absent') return null
-                    if (calendarFilter === 'cancelled' && state !== 'cancelled') return null
-                    if (calendarFilter === 'holiday' && !isHoliday(toLocalYmd(date))) return null
+                  const isFuture = dayYmd > todayYmd
+                  if (
+                    !matchesAnyCalendarFilter(calendarFilters, {
+                      slot: s,
+                      dayYmd,
+                      state,
+                      absences,
+                      courses,
+                    })
+                  ) {
+                    return null
                   }
+                  const displayState = displayAttendanceStateForCalendar(state, isFuture, {
+                    suppressImplicitPresent,
+                  }, dayYmd)
                   return (
                     <li key={`${s.id}-${toLocalKey(date)}`} className="mini-slot">
-                      <button
-                        type="button"
-                        className={`mini-slot-btn${state ? ` slot-state-${state}` : ''}${isFuture ? ' slot-disabled' : ''}`}
-                        onClick={() => {
-                          if (quickTapEnabled && onQuickTapMark) {
-                            onQuickTapMark(s, date)
-                            return
-                          }
-                          onRequestCalendarAbsence(s, date)
-                        }}
-                        disabled={isFuture}
+                      <CalendarQuickSlotButton
+                        className={`mini-slot-btn${displayState ? ` slot-state-${displayState}` : ''}${isFuture ? ' slot-disabled' : ''}`}
+                        quickTapEnabled={quickTapEnabled}
+                        onQuickTapMark={
+                          onQuickTapMark ? () => onQuickTapMark(s, date) : undefined
+                        }
+                        onOpenFullPicker={() => onRequestCalendarAbsence(s, date)}
                         aria-label={t('week.addAbsenceA11y', {
                           course: s.courseName,
                           time: s.startTime,
@@ -105,14 +129,15 @@ export function WeeklyScheduleView({
                         <span className="time">{s.startTime}</span>
                         <span className="course">{s.courseName}</span>
                         {s.isExtra ? <span className="badge sm">{t('schedule.badgeExtra')}</span> : null}
-                      </button>
+                      </CalendarQuickSlotButton>
                     </li>
                   )
                 })}
               </ul>
             )}
           </section>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

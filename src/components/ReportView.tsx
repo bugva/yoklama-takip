@@ -9,6 +9,8 @@ type Props = {
   slots: ScheduleSlot[]
   semesterStart?: string
   semesterEnd?: string
+  /** Geçmiş giriş atlandıysa rapor zımni gittim saymaz (yalnızca kayıtlı satırlar). */
+  pastAbsenceSkipped?: boolean
 }
 
 function KpiCard({ label, value, tone }: { label: string; value: string; tone?: 'primary' | 'success' | 'danger' | 'warning' }) {
@@ -302,11 +304,21 @@ function DetailModal({ stats, onClose }: { stats: CourseDetailStats; onClose: ()
   )
 }
 
-export function ReportView({ courses, absences, slots, semesterStart, semesterEnd }: Props) {
+export function ReportView({
+  courses,
+  absences,
+  slots,
+  semesterStart,
+  semesterEnd,
+  pastAbsenceSkipped,
+}: Props) {
   const [selectedCourseId, setSelectedCourseId] = useState<string>('')
   const [detailCourse, setDetailCourse] = useState<Course | null>(null)
 
-  const reports = useMemo(() => courseReports(courses, absences), [courses, absences])
+  const reports = useMemo(
+    () => courseReports(courses, absences, slots, semesterStart, semesterEnd, pastAbsenceSkipped),
+    [courses, absences, slots, semesterStart, semesterEnd, pastAbsenceSkipped],
+  )
   const trends = useMemo(
     () => weeklyTrends(absences, selectedCourseId || undefined),
     [absences, selectedCourseId],
@@ -314,8 +326,8 @@ export function ReportView({ courses, absences, slots, semesterStart, semesterEn
 
   const detailStats = useMemo(() => {
     if (!detailCourse) return null
-    return courseDetailStats(detailCourse, absences, slots, semesterStart, semesterEnd)
-  }, [detailCourse, absences, slots, semesterStart, semesterEnd])
+    return courseDetailStats(detailCourse, courses, absences, slots, semesterStart, semesterEnd, pastAbsenceSkipped)
+  }, [detailCourse, courses, absences, slots, semesterStart, semesterEnd, pastAbsenceSkipped])
 
   const summary = useMemo(() => {
     const absent = reports.reduce((acc, r) => acc + r.absent, 0)
@@ -324,8 +336,7 @@ export function ReportView({ courses, absences, slots, semesterStart, semesterEn
     const cancelled = reports.reduce((acc, r) => acc + r.cancelled, 0)
     const total = absent + unsure + present + cancelled
     const attendanceRate = total > 0 ? Math.round((present / total) * 100) : 0
-    const riskCount = reports.filter((r) => r.risk).length
-    return { absent, unsure, present, cancelled, total, attendanceRate, riskCount }
+    return { absent, unsure, present, cancelled, total, attendanceRate }
   }, [reports])
 
   return (
@@ -336,7 +347,11 @@ export function ReportView({ courses, absences, slots, semesterStart, semesterEn
         <KpiCard label={t('report.present')} value={`${summary.attendanceRate}%`} tone="success" />
         <KpiCard label={t('report.absent')} value={`${summary.absent + summary.unsure}`} tone="danger" />
         <KpiCard label="Toplam Kayıt" value={`${summary.total}`} tone="primary" />
-        <KpiCard label="Riskli Ders" value={`${summary.riskCount}`} tone={summary.riskCount > 0 ? 'warning' : 'success'} />
+        <KpiCard
+          label={t('report.kpiUnsure')}
+          value={`${summary.unsure}`}
+          tone={summary.unsure > 0 ? 'warning' : 'success'}
+        />
       </div>
 
       <div className="report-viz-grid">

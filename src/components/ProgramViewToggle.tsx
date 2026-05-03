@@ -5,6 +5,7 @@ import { t, type MsgKey } from '../i18n'
 type Props = {
   value: ProgramView
   onChange: (v: ProgramView) => void
+  demoTarget?: ProgramView | null
 }
 
 function IconToday({ active }: { active: boolean }) {
@@ -75,7 +76,7 @@ const TABS: { id: ProgramView; labelKey: MsgKey }[] = [
   { id: 'settings', labelKey: 'view.settings' },
 ]
 
-export function ProgramViewToggle({ value, onChange }: Props) {
+export function ProgramViewToggle({ value, onChange, demoTarget = null }: Props) {
   return (
     <div className="segment" role="tablist" aria-label={t('view.a11y')}>
       {TABS.map((tab) => {
@@ -87,7 +88,7 @@ export function ProgramViewToggle({ value, onChange }: Props) {
             type="button"
             role="tab"
             aria-selected={isActive}
-            className={`segment-btn ${isActive ? 'active' : ''}`}
+            className={`segment-btn ${isActive ? 'active' : ''} ${demoTarget === tab.id ? 'demo-target' : ''}`}
             onClick={() => onChange(tab.id)}
           >
             <Icon active={isActive} />
