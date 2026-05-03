@@ -817,15 +817,15 @@ export function Dashboard({
     <div className="screen home">
       <header className={`top-bar ${isScrolled ? 'scrolled' : ''}`}>
         <div className="top-bar-inner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <motion.h1 
-            layout 
+          <motion.h1
+            layout
             whileHover={{ scale: 1.03, rotate: -0.4 }}
             whileTap={{ scale: 0.96, rotate: 0.4 }}
             onClick={triggerDiscoTop}
-            style={{ 
+            style={{
               fontSize: isScrolled ? '1rem' : '1.55rem',
               margin: isScrolled ? '0' : '0 0 6px 0',
-              fontWeight: 800 
+              fontWeight: 800,
             }}
           >
             {t('dashboard.title')}
