@@ -4,7 +4,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/yoklama-takip/',
+  /** GitHub Pages + özel alan kökünde yayın (www.attendordance.app); repo alt dizini için eski: /yoklama-takip/ */
+  base: '/',
   plugins: [
     react(),
     VitePWA({
@@ -24,8 +25,8 @@ export default defineConfig({
         background_color: '#0f1117',
         display: 'standalone',
         orientation: 'portrait',
-        start_url: '/yoklama-takip/',
-        scope: '/yoklama-takip/',
+        start_url: '/',
+        scope: '/',
         lang: 'tr',
         icons: [
           {

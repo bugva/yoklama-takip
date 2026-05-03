@@ -13,7 +13,7 @@ export function writeNotifRemindersEnabled(on: boolean): void {
   else localStorage.removeItem(LS_ENABLED)
 }
 
-/** Bildirim tıklanınca açılacak tam path (pathname + search), örn. /yoklama-takip/?notif=checkin */
+/** Bildirim tıklanınca açılacak path; BASE_URL ile uyumlu (örn. /?notif=checkin) */
 export function notifNavigatePath(query: Record<string, string>): string {
   const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || ''
   const qs = new URLSearchParams(query).toString()
