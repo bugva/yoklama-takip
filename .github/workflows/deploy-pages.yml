@@ -31,8 +31,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      # GitHub Pages kökünde SPA; bilinmeyen yollar 404 yerine index dönsün
+      - name: SPA fallback + doğrula (base / ile uyumlu)
+        run: |
+          cp dist/index.html dist/404.html
+          grep -q 'src="/assets/' dist/index.html || (echo "Beklenmeyen index.html"; exit 1)
+
       - name: Publish to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
+          # Özel alan için gh-pages kökünde CNAME (Pages ayarıyla uyumlu olmalı)
+          cname: www.attendordance.app
