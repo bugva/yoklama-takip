@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import type { AbsenceRecord, AppData, AttendanceState, Course, ScheduleSlot } from '../types'
 import { LanguageToggle } from './LanguageToggle'
-import { MONTH_NAMES, WEEKDAY_SHORT, t, type MsgKey } from '../i18n'
-import { confirmReasonBeforeAdd } from '../logic/limits'
+import { MONTH_NAMES, WEEKDAY_SHORT, t } from '../i18n'
 import { calendarSlotStateOnDate, displayAttendanceStateForCalendar, upsertAttendanceForSlotDay } from '../logic/absenceRecords'
 import { slotsForDate } from '../logic/slotsForDate'
 import { mondayFirstDayIndex, toLocalYmd } from '../logic/dateUtils'
@@ -323,21 +322,6 @@ export function PastAbsenceEntry({ initialData, onComplete }: Props) {
   function submitPastSlotState(state: AttendanceState) {
     if (!pastSlotModal || !currentCourse) return
     const { slot, day } = pastSlotModal
-    const countsLimit = state === 'absent' || state === 'unsure'
-    const reason = confirmReasonBeforeAdd({
-      course: currentCourse,
-      absences: data.absences,
-      addingUnknown: state === 'unsure',
-    })
-    if (countsLimit && reason) {
-      const msgKey =
-        reason === 'exceedMax'
-          ? 'absence.confirm.exceedMax'
-          : reason === 'unknownRisk'
-            ? 'absence.confirm.unknownRisk'
-            : 'absence.confirm.ratioRisk'
-      if (!window.confirm(t(msgKey as MsgKey))) return
-    }
     setData((prev) => setPastSlotExplicitState(prev, currentCourse, slot, day, state))
     setPastSlotModal(null)
   }

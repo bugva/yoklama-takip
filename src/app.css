@@ -426,18 +426,6 @@ h2 {
   margin-top: 0;
 }
 
-.initial-lang-modal h2 {
-  margin-top: 2px;
-  margin-bottom: 8px;
-}
-
-.lang-choice-grid {
-  margin-top: 12px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
 .notif-checkin-lead {
   margin: 0 0 16px;
   font-size: 0.92rem;
@@ -2137,6 +2125,17 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Uzun basışta ders adı seçilmesin; iOS’ta kopyala / büyüteç tetiklenmesin */
+.today-card,
+.mini-slot-btn,
+.month-detail-card,
+.past-abs-slot-btn {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 .today-card {

@@ -35,7 +35,14 @@ export function CalendarQuickSlotButton({
   })
 
   return (
-    <button type="button" className={className} disabled={disabled} aria-label={ariaLabel} {...handlers}>
+    <button
+      type="button"
+      className={className}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onContextMenu={(e) => e.preventDefault()}
+      {...handlers}
+    >
       {children}
     </button>
   )

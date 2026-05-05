@@ -17,6 +17,14 @@ export function absenceCountForCourse(courseId: string, absences: AbsenceRecord[
   return absences.filter((a) => a.courseId === courseId && a.countTowardsLimit !== false).length
 }
 
+/** Tanımlı sınıra göre kalan “devamsızlık hakkı” (sayım); sınır yoksa null */
+export function remainingTowardLimit(course: Course, absences: AbsenceRecord[]): number | null {
+  const max = maxAllowedAbsences(course)
+  if (max == null || max <= 0) return null
+  const used = absenceCountForCourse(course.id, absences)
+  return max - used
+}
+
 export function usedRatio(used: number, max: number | null): number | null {
   if (max == null || max <= 0) return null
   return used / max
@@ -30,23 +38,3 @@ export function isRiskZone(used: number, max: number | null, unknownCount: numbe
   return false
 }
 
-export type ConfirmReason = 'exceedMax' | 'ratioRisk' | 'unknownRisk'
-
-/** Yeni kayıt öncesi kullanıcıya gösterilecek onay nedeni; null = onay gerekmiyor */
-export function confirmReasonBeforeAdd(params: {
-  course: Course
-  absences: AbsenceRecord[]
-  addingUnknown: boolean
-}): ConfirmReason | null {
-  const max = maxAllowedAbsences(params.course)
-  if (max == null || max <= 0) return null
-  const used = absenceCountForCourse(params.course.id, params.absences)
-  const unknown = unknownAbsenceCount(params.course.id, params.absences)
-  const nextUsed = used + 1
-  const nextUnknown = unknown + (params.addingUnknown ? 1 : 0)
-
-  if (nextUsed > max) return 'exceedMax'
-  if (params.addingUnknown && nextUnknown >= 2 && nextUsed >= max - 1) return 'unknownRisk'
-  if (nextUsed / max >= 0.85) return 'ratioRisk'
-  return null
-}

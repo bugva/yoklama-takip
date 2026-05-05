@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import type { AppData, Course } from './types'
 import { emptyData, exportJson, importJson, lastAutoBackupAt, loadAutoBackup, loadData, saveData } from './storage'
 import { ScheduleWizard } from './components/ScheduleWizard'
@@ -8,8 +8,7 @@ import { Dashboard } from './components/Dashboard'
 import { OnboardingExtrasPanel } from './components/OnboardingExtrasPanel'
 import { PastAbsencePrompt } from './components/PastAbsencePrompt'
 import { PastAbsenceEntry } from './components/PastAbsenceEntry'
-import { hasStoredLanguagePreference, t, type AppLang } from './i18n'
-import { useLanguage } from './LanguageContext'
+import { t } from './i18n'
 import './app.css'
 
 type OnboardingSemester = { semesterStart: string; semesterEnd: string }
@@ -47,40 +46,9 @@ function initialPhase(): Phase {
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>(initialPhase)
-  const { setLang } = useLanguage()
-  const [showLangPicker, setShowLangPicker] = useState(() => !hasStoredLanguagePreference())
-
-  function pickLang(next: AppLang) {
-    setLang(next)
-    setShowLangPicker(false)
-  }
-
-  function withLangGate(node: ReactNode) {
-    return (
-      <>
-        {node}
-        {showLangPicker && (
-          <div className="modal-backdrop modal-layer-high" role="presentation">
-            <div className="modal sheet initial-lang-modal" role="dialog" aria-modal="true" aria-label={t('lang.pickTitle')}>
-              <h2>{t('lang.pickTitle')}</h2>
-              <p className="muted small">{t('lang.pickLead')}</p>
-              <div className="lang-choice-grid">
-                <button type="button" className="btn secondary" onClick={() => pickLang('tr')}>
-                  Turkce
-                </button>
-                <button type="button" className="btn secondary" onClick={() => pickLang('en')}>
-                  English
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </>
-    )
-  }
 
   if (phase.id === 'onboard-academic') {
-    return withLangGate(
+    return (
       <SemesterDatePicker
         initialStart=""
         initialEnd=""
@@ -88,12 +56,12 @@ export default function App() {
         onComplete={(start, end) => {
           setPhase({ id: 'onboard-schedule', semesterStart: start, semesterEnd: end })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'onboard-schedule') {
-    return withLangGate(
+    return (
       <ScheduleWizard
         initialSlots={[]}
         semesterStart={phase.semesterStart}
@@ -107,12 +75,12 @@ export default function App() {
             semesterEnd: phase.semesterEnd,
           })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'onboard-rules') {
-    return withLangGate(
+    return (
       <CourseRulesWizard
         slots={phase.slots}
         initialCourses={[]}
@@ -135,12 +103,12 @@ export default function App() {
             semesterEnd: phase.semesterEnd,
           })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'onboard-past-prompt') {
-    return withLangGate(
+    return (
       <PastAbsencePrompt
         onYes={() =>
           setPhase({
@@ -169,12 +137,12 @@ export default function App() {
           saveData(data)
           setPhase({ id: 'home', data })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'onboard-past-entry') {
-    return withLangGate(
+    return (
       <PastAbsenceEntry
         initialData={phase.data}
         onComplete={(data) => {
@@ -182,12 +150,12 @@ export default function App() {
           saveData(next)
           setPhase({ id: 'home', data: next })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'onboard-extras') {
-    return withLangGate(
+    return (
       <OnboardingExtrasPanel
         initialSlots={phase.slots}
         onComplete={(slots) =>
@@ -208,12 +176,12 @@ export default function App() {
             semesterEnd: phase.semesterEnd,
           })
         }
-      />,
+      />
     )
   }
 
   if (phase.id === 'edit-schedule') {
-    return withLangGate(
+    return (
       <ScheduleWizard
         initialSlots={phase.data.scheduleSlots}
         semesterStart={phase.data.semesterStart}
@@ -224,12 +192,12 @@ export default function App() {
           saveData(data)
           setPhase({ id: 'home', data })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'edit-rules') {
-    return withLangGate(
+    return (
       <CourseRulesWizard
         slots={phase.data.scheduleSlots}
         initialCourses={phase.data.courses}
@@ -239,12 +207,12 @@ export default function App() {
           saveData(data)
           setPhase({ id: 'home', data })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'edit-semester') {
-    return withLangGate(
+    return (
       <SemesterDatePicker
         initialStart={phase.data.semesterStart ?? ''}
         initialEnd={phase.data.semesterEnd ?? ''}
@@ -254,13 +222,13 @@ export default function App() {
           saveData(data)
           setPhase({ id: 'home', data })
         }}
-      />,
+      />
     )
   }
 
   if (phase.id === 'home') {
     const data = phase.data
-    return withLangGate(
+    return (
       <>
         <Dashboard
           data={data}
@@ -304,7 +272,7 @@ export default function App() {
           }}
           lastAutoBackupAt={lastAutoBackupAt()}
         />
-      </>,
+      </>
     )
   }
 

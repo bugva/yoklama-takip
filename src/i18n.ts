@@ -15,7 +15,13 @@ function detectInitialLang(): AppLang {
   const stored = localStorage.getItem(LANG_KEY)
   if (stored === 'tr' || stored === 'en') return stored
   const nav = navigator.language.toLowerCase()
-  return nav.startsWith('tr') ? 'tr' : 'en'
+  const inferred: AppLang = nav.startsWith('tr') ? 'tr' : 'en'
+  try {
+    localStorage.setItem(LANG_KEY, inferred)
+  } catch {
+    // depolama yoksa yine de tarayıcı dilini kullan
+  }
+  return inferred
 }
 
 let currentLang: AppLang = detectInitialLang()
@@ -40,11 +46,6 @@ export let WEEKDAY_SHORT = currentMessages()['weekdays.short'].split(',')
 
 export function getLanguage(): AppLang {
   return currentLang
-}
-
-export function hasStoredLanguagePreference(): boolean {
-  const stored = localStorage.getItem(LANG_KEY)
-  return stored === 'tr' || stored === 'en'
 }
 
 export function setLanguage(next: AppLang): void {

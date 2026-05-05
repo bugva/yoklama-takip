@@ -8,9 +8,9 @@ import { MonthlyScheduleView } from './MonthlyScheduleView'
 import { slotsForDate } from '../logic/slotsForDate'
 import {
   absenceCountForCourse,
-  confirmReasonBeforeAdd,
   isRiskZone,
   maxAllowedAbsences,
+  remainingTowardLimit,
   unknownAbsenceCount,
 } from '../logic/limits'
 import { AddExtraLessonModal } from './AddExtraLessonModal'
@@ -25,12 +25,6 @@ import { getHoliday } from '../logic/holidays'
 import { triggerHaptic, scaleBounce } from '../lib/haptics'
 import { useQuickTapOrLongPress } from '../lib/useQuickTapOrLongPress'
 import { useTheme } from '../lib/useTheme'
-import {
-  notifNavigatePath,
-  readNotifRemindersEnabled,
-  tickEndOfDayWrapUpNotification,
-  writeNotifRemindersEnabled,
-} from '../lib/notifScheduler'
 import { NotifCheckInModal } from './NotifCheckInModal'
 import { motion } from 'framer-motion'
 import { useLanguage } from '../LanguageContext'
@@ -73,6 +67,7 @@ function TodayCourseTapSurface({
       transition={{ type: 'spring', stiffness: 120, damping: 25, mass: 1 }}
       type="button"
       className={className}
+      onContextMenu={(e) => e.preventDefault()}
       {...handlers}
     >
       {children}
@@ -142,7 +137,6 @@ export function Dashboard({
   const [notifPanelSlot, setNotifPanelSlot] = useState<ScheduleSlot | null>(null)
   const [wrapupOpen, setWrapupOpen] = useState(false)
   const [wrapupStateBySlot, setWrapupStateBySlot] = useState<Record<string, 'present' | 'absent'>>({})
-  const [notifPrefsOn, setNotifPrefsOn] = useState(() => readNotifRemindersEnabled())
   const [quickTapEnabled, setQuickTapEnabled] = useState(() => localStorage.getItem(QUICK_TAP_KEY) === '1')
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [updateReady, setUpdateReady] = useState(false)
@@ -224,30 +218,6 @@ export function Dashboard({
   )
 
   useEffect(() => {
-    const nowMinutes = clock.getHours() * 60 + clock.getMinutes()
-    const ymd = toLocalYmd(clock)
-    const newReminders: string[] = []
-    for (const slot of todaySlots) {
-      const course = findCourseFast(slot.courseName)
-      if (!course?.attendanceRequired) continue
-      const startMin = minutesSinceMidnight(slot.startTime)
-      const beforeKey = `reminder-before-${slot.id}-${ymd}`
-      if (nowMinutes >= startMin - 10 && nowMinutes < startMin && !localStorage.getItem(beforeKey)) {
-        localStorage.setItem(beforeKey, '1')
-        newReminders.push(t('reminder.before', { course: course.name, min: startMin - nowMinutes }))
-      }
-    }
-    if (newReminders.length > 0) {
-      queueMicrotask(() =>
-        setReminders((prev) => {
-          const merged = [...prev, ...newReminders]
-          return [...new Set(merged)].slice(-4)
-        }),
-      )
-    }
-  }, [clock, todaySlots, data.courses])
-
-  useEffect(() => {
     if (shortcutHandled) return
     const params = new URLSearchParams(window.location.search)
     if (params.get('action') !== 'mark-absent') return
@@ -319,21 +289,6 @@ export function Dashboard({
     if (target) setNotifPanelSlot(target)
   }, [clock, data.scheduleSlots, data.courses])
 
-  useEffect(() => {
-    if (!readNotifRemindersEnabled()) return
-    const run = () =>
-      void tickEndOfDayWrapUpNotification({
-        now: clock,
-        todaySlots,
-        courses: data.courses,
-        title: t('notif.wrapupTitle'),
-        body: t('notif.wrapupBody'),
-      })
-    void run()
-    const id = window.setInterval(run, 60_000)
-    return () => window.clearInterval(id)
-  }, [clock, todaySlots, data.courses])
-
   const trackableCourses = useMemo(() => {
     return data.courses.filter((c) => c.attendanceRequired)
   }, [data.courses])
@@ -344,6 +299,13 @@ export function Dashboard({
       const used = absenceCountForCourse(c.id, data.absences)
       const unk = unknownAbsenceCount(c.id, data.absences)
       return isRiskZone(used, max, unk)
+    })
+  }, [trackableCourses, data.absences])
+
+  const lowRemainingCourses = useMemo(() => {
+    return trackableCourses.filter((c) => {
+      const rem = remainingTowardLimit(c, data.absences)
+      return rem != null && rem >= 1 && rem <= 3
     })
   }, [trackableCourses, data.absences])
 
@@ -421,20 +383,6 @@ export function Dashboard({
     if (!course) return false
     const addingUnknown = params.attendanceState === 'unsure'
     const countsLimit = params.attendanceState === 'absent' || params.attendanceState === 'unsure'
-    const reason = confirmReasonBeforeAdd({
-      course,
-      absences: data.absences,
-      addingUnknown,
-    })
-    if (countsLimit && reason) {
-      const msgKey =
-        reason === 'exceedMax'
-          ? 'absence.confirm.exceedMax'
-          : reason === 'unknownRisk'
-            ? 'absence.confirm.unknownRisk'
-            : 'absence.confirm.ratioRisk'
-      if (!window.confirm(t(msgKey as MsgKey))) return false
-    }
     const rec: AbsenceRecord = {
       id: crypto.randomUUID(),
       courseId: params.courseId,
@@ -516,20 +464,6 @@ export function Dashboard({
       attendanceState: state,
       countTowardsLimit: countsLimit,
       note: calNote.trim() || undefined,
-    }
-    const reason = confirmReasonBeforeAdd({
-      course,
-      absences: data.absences,
-      addingUnknown: state === 'unsure',
-    })
-    if (countsLimit && reason) {
-      const msgKey =
-        reason === 'exceedMax'
-          ? 'absence.confirm.exceedMax'
-          : reason === 'unknownRisk'
-            ? 'absence.confirm.unknownRisk'
-            : 'absence.confirm.ratioRisk'
-      if (!window.confirm(t(msgKey as MsgKey))) return
     }
     saveAttendance(rec)
     setCalModal(null)
@@ -775,24 +709,6 @@ export function Dashboard({
     quickSetStateForSlot(slot, day, next, source)
   }
 
-  async function sendTestWrapupNotification() {
-    if (typeof Notification === 'undefined') {
-      window.alert(t('settings.notifDenied'))
-      return
-    }
-    if (Notification.permission !== 'granted') {
-      window.alert(t('settings.notifDenied'))
-      return
-    }
-    if (!('serviceWorker' in navigator)) return
-    const reg = await navigator.serviceWorker.ready
-    await reg.showNotification(t('notif.wrapupTitle'), {
-      body: t('notif.wrapupBody'),
-      tag: `notif-wrapup-test-${Date.now()}`,
-      data: { path: notifNavigatePath({ notif: 'wrapup', ymd: toLocalYmd(clock) }) },
-    })
-  }
-
   const backupText = lastAutoBackupAt ? new Date(lastAutoBackupAt).toLocaleString() : t('settings.backupNever')
   const discoMount =
     typeof document !== 'undefined' && document.body ? document.body : null
@@ -888,12 +804,6 @@ export function Dashboard({
         </div>
       )}
 
-      {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
-        <div className="banner banner-warn" role="status">
-          <p>{t('status.permissionDenied')}</p>
-        </div>
-      )}
-
       {updateReady && (
         <div className="banner banner-info" role="status">
           <p>{t('update.ready')}</p>
@@ -943,6 +853,22 @@ export function Dashboard({
       {anyRisk && (
         <div className="banner banner-risk" role="status">
           {t('absence.riskBanner')}
+        </div>
+      )}
+
+      {lowRemainingCourses.length > 0 && (
+        <div className="banner banner-warn" role="status">
+          <p className="muted small" style={{ marginBottom: 8 }}>
+            {t('absence.lowRemainingIntro')}
+          </p>
+          {lowRemainingCourses.map((c) => (
+            <p key={c.id}>
+              {t('absence.lowRemainingLine', {
+                course: c.name,
+                n: remainingTowardLimit(c, data.absences) ?? 0,
+              })}
+            </p>
+          ))}
         </div>
       )}
 
@@ -1243,47 +1169,6 @@ export function Dashboard({
                 {t('settings.tapModeLongPressHint')}
               </p>
             ) : null}
-          </div>
-          <div className="settings-notif-block">
-            <p className="muted small">{t('settings.notifLead')}</p>
-            <div className="btn-row wrap" style={{ marginTop: 10 }}>
-              {notifPrefsOn ? (
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => {
-                    writeNotifRemindersEnabled(false)
-                    setNotifPrefsOn(false)
-                  }}
-                >
-                  {t('settings.notifDisable')}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={async () => {
-                    if (typeof Notification === 'undefined') {
-                      globalThis.alert(t('settings.notifDenied'))
-                      return
-                    }
-                    const p = await Notification.requestPermission()
-                    if (p !== 'granted') {
-                      globalThis.alert(t('settings.notifDenied'))
-                      return
-                    }
-                    if ('serviceWorker' in navigator) await navigator.serviceWorker.ready
-                    writeNotifRemindersEnabled(true)
-                    setNotifPrefsOn(true)
-                  }}
-                >
-                  {t('settings.notifEnable')}
-                </button>
-              )}
-              <button type="button" className="btn secondary" onClick={() => void sendTestWrapupNotification()}>
-                {t('settings.notifTest')}
-              </button>
-            </div>
           </div>
           <div className="settings-notif-block">
             <p className="muted small">{t('settings.dataLead')}</p>
