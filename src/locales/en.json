@@ -244,6 +244,7 @@
   "absence.confirm.unknownRisk": "There are multiple uncertain records and a risk near limit. Continue?",
   "absence.confirm.exceedMax": "This will exceed the configured absence limit. Continue?",
   "absence.riskBanner": "Some courses are in risk zone or have too many uncertain records. Check details.",
+  "absence.exhaustedBanner": "You may have already failed one or more courses due to exhausted absence allowance.",
   "absence.lowRemainingIntro": "You are close to your absence limit — be careful.",
   "absence.lowRemainingLine": "\"{course}\": Only {n} more counted absence(s) before you hit the limit.",
   "absence.calendarNoTrackable": "No attendance-tracked course found for this class name.",

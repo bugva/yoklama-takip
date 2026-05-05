@@ -1761,19 +1761,30 @@ h2 {
   width: 100%;
   text-align: left;
   font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 1px solid transparent;
+  color: var(--text);
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.01) 42%, transparent 100%),
+    var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: var(--radius-xs);
   padding: 5px 7px;
   margin: 0 -8px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 6px 16px rgba(0, 0, 0, 0.3);
+  transition: transform 0.25s var(--spring), border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
 .mini-slot-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
+  border-color: rgba(94, 92, 230, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 24px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(94, 92, 230, 0.18);
 }
 
 .mini-slot-btn:focus-visible {
@@ -2546,15 +2557,21 @@ h2 {
   flex-direction: column;
   gap: 4px;
   padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.01) 42%, transparent 100%),
+    var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 12px;
   cursor: pointer;
   text-align: left;
   font: inherit;
   color: var(--text);
-  transition: transform 0.12s, border-color 0.2s, background 0.2s;
+  transition: transform 0.25s var(--spring), border-color 0.2s, box-shadow 0.2s, background 0.2s;
   position: relative;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.34);
 }
 
 .month-detail-card::before {
@@ -2572,9 +2589,12 @@ h2 {
 
 .month-detail-card:hover:not(:disabled),
 .month-detail-card:focus-visible:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: var(--primary);
-  box-shadow: 0 4px 16px rgba(99, 145, 255, 0.1);
+  transform: translateY(-2px);
+  border-color: rgba(94, 92, 230, 0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 14px 34px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(94, 92, 230, 0.2);
 }
 
 .month-detail-card:active:not(:disabled) {
@@ -3671,8 +3691,25 @@ h2 {
     var(--surface);
 }
 
+[data-theme='light'] .mini-slot-btn,
+[data-theme='light'] .month-detail-card {
+  border-color: rgba(15, 23, 42, 0.12);
+  background:
+    linear-gradient(150deg, rgba(15, 23, 42, 0.04) 0%, rgba(15, 23, 42, 0.01) 42%, transparent 100%),
+    var(--surface);
+}
+
 [data-theme='light'] .today-card:hover,
 [data-theme='light'] .today-card:focus-visible {
+  box-shadow:
+    0 14px 32px rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(94, 92, 230, 0.22);
+}
+
+[data-theme='light'] .mini-slot-btn:hover,
+[data-theme='light'] .mini-slot-btn:focus-visible,
+[data-theme='light'] .month-detail-card:hover:not(:disabled),
+[data-theme='light'] .month-detail-card:focus-visible:not(:disabled) {
   box-shadow:
     0 14px 32px rgba(15, 23, 42, 0.12),
     0 0 0 1px rgba(94, 92, 230, 0.22);

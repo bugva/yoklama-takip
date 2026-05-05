@@ -244,6 +244,7 @@
   "absence.confirm.unknownRisk": "Birden fazla emin olunmayan kayıt ve sınır yakınlığı riski var. Devam edilsin mi?",
   "absence.confirm.exceedMax": "Bu kayıt tanımlı devamsızlık sınırını aşacak. Yine de eklemek istiyor musunuz?",
   "absence.riskBanner": "Bazı derslerde devamsızlık hakkınız risk bölgesinde veya çok sayıda emin olunmayan kayıt var. Detayları kontrol edin.",
+  "absence.exhaustedBanner": "Bir veya daha fazla derste devamsızlık hakkını doldurdun; dersten kalmış olabilirsin.",
   "absence.lowRemainingIntro": "Devamsızlık hakkı az — dikkatli olun.",
   "absence.lowRemainingLine": "«{course}»: Sınırı aşmamak için son {n} kayıt hakkınız kaldı.",
   "absence.calendarNoTrackable": "Bu ders adı için yoklama takibi açık bir ders bulunamadı.",
