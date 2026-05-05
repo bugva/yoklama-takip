@@ -134,10 +134,11 @@ export function Dashboard({
   const [showFilters, setShowFilters] = useState(false)
   const [holidayDismissed, setHolidayDismissed] = useState(false)
   const [reminders, setReminders] = useState<string[]>([])
+  const [showLowRemainingTransient, setShowLowRemainingTransient] = useState(false)
   const [notifPanelSlot, setNotifPanelSlot] = useState<ScheduleSlot | null>(null)
   const [wrapupOpen, setWrapupOpen] = useState(false)
   const [wrapupStateBySlot, setWrapupStateBySlot] = useState<Record<string, 'present' | 'absent'>>({})
-  const [quickTapEnabled, setQuickTapEnabled] = useState(() => localStorage.getItem(QUICK_TAP_KEY) === '1')
+  const [quickTapEnabled, setQuickTapEnabled] = useState(() => localStorage.getItem(QUICK_TAP_KEY) !== '0')
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [updateReady, setUpdateReady] = useState(false)
   const [showReleaseNotes, setShowReleaseNotes] = useState(false)
@@ -309,14 +310,31 @@ export function Dashboard({
     })
   }, [trackableCourses, data.absences])
 
-  const pendingCheckinCount = useMemo(
-    () =>
-      todaySlots.filter((s) => {
-        const c = findCourseFast(s.courseName)
-        return Boolean(c?.attendanceRequired && !readClassPromptAnswer(s.id, clock))
-      }).length,
-    [todaySlots, data.courses, clock],
-  )
+  const exhaustedCourses = useMemo(() => {
+    return trackableCourses.filter((c) => {
+      const rem = remainingTowardLimit(c, data.absences)
+      return rem != null && rem <= 0
+    })
+  }, [trackableCourses, data.absences])
+
+  const showLowRemainingBanner = lowRemainingCourses.length > 0 && (view === 'today' || showLowRemainingTransient)
+
+  const lowRemainingHideTimerRef = useRef<number | null>(null)
+
+  function pulseLowRemainingBannerForCalendar() {
+    if (lowRemainingHideTimerRef.current != null) window.clearTimeout(lowRemainingHideTimerRef.current)
+    setShowLowRemainingTransient(true)
+    lowRemainingHideTimerRef.current = window.setTimeout(() => {
+      setShowLowRemainingTransient(false)
+      lowRemainingHideTimerRef.current = null
+    }, 5000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (lowRemainingHideTimerRef.current != null) window.clearTimeout(lowRemainingHideTimerRef.current)
+    }
+  }, [])
 
   const discoSquares = useMemo(() => {
     const radius = 50
@@ -466,6 +484,7 @@ export function Dashboard({
       note: calNote.trim() || undefined,
     }
     saveAttendance(rec)
+    pulseLowRemainingBannerForCalendar()
     setCalModal(null)
   }
 
@@ -536,15 +555,6 @@ export function Dashboard({
     if (changed > 0) {
       onUpdateData({ ...data, absences: nextAbsences })
       setClock(new Date())
-    }
-  }
-
-  function openFirstPendingCheckin() {
-    if (trackableTodaySlots.length > 0) {
-      setView('today')
-      setWrapupOpen(true)
-    } else {
-      setReminders((prev) => [...prev, t('shortcuts.noPending')])
     }
   }
 
@@ -669,6 +679,7 @@ export function Dashboard({
         source,
       })
     ) {
+      if (source !== 'quick') pulseLowRemainingBannerForCalendar()
       if (state === 'present' || state === 'absent' || state === 'unsure') {
         writeClassPromptAnswer(slot.id, day, state === 'present' ? 'present' : state === 'absent' ? 'absent' : 'unsure')
       }
@@ -769,23 +780,6 @@ export function Dashboard({
         </div>
       )}
 
-      {view === 'today' && (
-        <div className="dashboard-shortcuts" role="group" aria-label="Dashboard kisayollari">
-          <button
-            type="button"
-            className={`btn sm dashboard-shortcut-btn ${pendingCheckinCount > 0 ? 'primary' : 'secondary'}`}
-            aria-label={`${t('shortcuts.checkin')} (${pendingCheckinCount})`}
-            onClick={() => {
-              triggerHaptic('light')
-              openFirstPendingCheckin()
-            }}
-          >
-            {t('shortcuts.checkin')}
-            {pendingCheckinCount > 0 ? <span className="dashboard-shortcut-pill">{pendingCheckinCount}</span> : null}
-          </button>
-        </div>
-      )}
-
       {reminders.length > 0 && (
         <div className="banner banner-info" role="status">
           {reminders.map((r, i) => (
@@ -850,13 +844,17 @@ export function Dashboard({
         </div>
       )}
 
-      {anyRisk && (
+      {exhaustedCourses.length > 0 ? (
+        <div className="banner banner-risk" role="status">
+          {t('absence.exhaustedBanner')}
+        </div>
+      ) : anyRisk ? (
         <div className="banner banner-risk" role="status">
           {t('absence.riskBanner')}
         </div>
-      )}
+      ) : null}
 
-      {lowRemainingCourses.length > 0 && (
+      {showLowRemainingBanner && (
         <div className="banner banner-warn" role="status">
           <p className="muted small" style={{ marginBottom: 8 }}>
             {t('absence.lowRemainingIntro')}
