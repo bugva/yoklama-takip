@@ -17,6 +17,10 @@ export function writeClassPromptAnswer(
   localStorage.setItem(classPromptStorageKey(slotId, toLocalYmd(d)), value)
 }
 
+export function clearClassPromptAnswer(slotId: string, d: Date): void {
+  localStorage.removeItem(classPromptStorageKey(slotId, toLocalYmd(d)))
+}
+
 export function readClassPromptAnswer(slotId: string, d: Date): ClassPromptAnswer | null {
   const raw = localStorage.getItem(classPromptStorageKey(slotId, toLocalYmd(d)))
   if (raw === 'present' || raw === 'absent' || raw === 'unsure' || raw === 'dismissed') return raw

@@ -4,12 +4,18 @@ import { t } from '../i18n'
 type Props = {
   onYes: () => void
   onNo: () => void
+  onBack?: () => void
 }
 
-export function PastAbsencePrompt({ onYes, onNo }: Props) {
+export function PastAbsencePrompt({ onYes, onNo, onBack }: Props) {
   return (
     <div className="screen">
       <div className="screen-top-bar">
+        {onBack && (
+          <button type="button" className="btn secondary sm" onClick={onBack}>
+            {t('app.back')}
+          </button>
+        )}
         <LanguageToggle />
       </div>
       <h1>{t('onboard.pastTitle')}</h1>

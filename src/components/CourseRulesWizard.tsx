@@ -9,6 +9,7 @@ type Props = {
   initialCourses: Course[]
   onComplete: (courses: Course[]) => void
   onCancel?: () => void
+  onBack?: () => void
 }
 
 type Draft = {
@@ -27,7 +28,7 @@ function defaultDraft(): Draft {
   }
 }
 
-export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel }: Props) {
+export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel, onBack }: Props) {
   const names = useMemo(() => uniqueCourseNamesForRules(slots), [slots])
   const [index, setIndex] = useState(0)
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => {
@@ -97,6 +98,11 @@ export function CourseRulesWizard({ slots, initialCourses, onComplete, onCancel 
   return (
     <div className="screen rules-screen rules-screen--sticky">
       <div className="screen-top-bar">
+        {onBack && (
+          <button type="button" className="btn secondary sm" onClick={onBack}>
+            {t('app.back')}
+          </button>
+        )}
         <LanguageToggle />
       </div>
       {onCancel && (

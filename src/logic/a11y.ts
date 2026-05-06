@@ -15,9 +15,9 @@ export function stateIcon(state: AttendanceState | null | undefined): string {
 export function stateA11yLabel(state: AttendanceState | null | undefined): string {
   if (!state) return ''
   const labels: Record<AttendanceState, string> = {
-    absent: 'Devamsız',
-    unsure: 'Emin değil',
-    present: 'Katıldım',
+    absent: 'Kaçırdım',
+    unsure: 'Belirsiz',
+    present: 'Girdim',
     cancelled: 'İptal',
   }
   return labels[state] ?? ''

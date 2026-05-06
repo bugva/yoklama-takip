@@ -130,7 +130,9 @@ function cycleSlotDay(prev: AppData, course: Course, slot: ScheduleSlot, day: Da
   const current = calendarSlotStateOnDate(prev.absences, slot, day, prev.courses)
 
   let next: AttendanceState | null
-  if (current === null || current === 'present' || current === 'cancelled') {
+  if (current === null || current === 'cancelled') {
+    next = 'present'
+  } else if (current === 'present') {
     next = 'absent'
   } else if (current === 'absent') {
     next = 'unsure'
@@ -393,8 +395,10 @@ export function PastAbsenceEntry({ initialData, onComplete }: Props) {
                   onClick={() => openMonth(m)}
                 >
                   <MonthTileMicroPreview month={m} />
-                  <span className="past-abs-month-tile-name">{MONTH_NAMES[m.getMonth()]}</span>
-                  <span className="past-abs-month-tile-year">{m.getFullYear()}</span>
+                  <div className="past-abs-month-tile-header">
+                    <span className="past-abs-month-tile-name">{MONTH_NAMES[m.getMonth()]}</span>
+                    <span className="past-abs-month-tile-year">{m.getFullYear()}</span>
+                  </div>
                 </button>
               ))}
             </div>
@@ -434,7 +438,7 @@ export function PastAbsenceEntry({ initialData, onComplete }: Props) {
               </div>
             ))}
           </div>
-          <div className="cal-grid past-abs-cal-grid" style={{ gridTemplateRows: `repeat(${rows}, minmax(6.25rem, auto))` }}>
+          <div className="cal-grid past-abs-cal-grid" style={{ gridTemplateRows: `repeat(${rows}, minmax(5.8rem, auto))` }}>
             {Array.from({ length: blanks }, (_, i) => (
               <div key={`b-${i}`} className="cal-cell muted" />
             ))}
@@ -469,8 +473,8 @@ export function PastAbsenceEntry({ initialData, onComplete }: Props) {
                         const displayState =
                           displayAttendanceStateForCalendar(raw, false, {
                             suppressImplicitPresent: data.pastAbsenceSkipped === true,
-                          }, ymd) ?? 'present'
-                        const vis = displayState
+                          }, ymd)
+                        const vis = displayState || 'default'
                         return (
                           <CalendarQuickSlotButton
                             key={slot.id}
@@ -481,8 +485,8 @@ export function PastAbsenceEntry({ initialData, onComplete }: Props) {
                             aria-label={`${slot.courseName} ${slot.startTime}`}
                           >
                             <span className="past-abs-slot-time">{slot.startTime}</span>
-                            <span className="past-abs-slot-label">
-                              {t(`absence.todayState.${vis}` as Parameters<typeof t>[0])}
+                            <span className="past-abs-slot-indicator" aria-hidden>
+                              {vis === 'present' ? '✓' : vis === 'absent' ? '✗' : vis === 'unsure' ? '?' : vis === 'cancelled' ? '—' : '•'}
                             </span>
                           </CalendarQuickSlotButton>
                         )
