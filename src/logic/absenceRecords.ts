@@ -49,7 +49,7 @@ export function displayAttendanceStateForCalendar(
   }
   if (opts?.suppressImplicitPresent && raw === null) return null
   if (holiday && raw === null) return 'cancelled'
-  return raw ?? 'present'
+  return raw
 }
 
 export function calendarSlotStateOnDate(

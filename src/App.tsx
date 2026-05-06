@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useLanguage } from './LanguageContext'
 import type { AppData, Course } from './types'
 import { emptyData, exportJson, importJson, lastAutoBackupAt, loadAutoBackup, loadData, saveData } from './storage'
 import { ScheduleWizard } from './components/ScheduleWizard'
@@ -45,6 +46,7 @@ function initialPhase(): Phase {
 }
 
 export default function App() {
+  useLanguage()
   const [phase, setPhase] = useState<Phase>(initialPhase)
 
   if (phase.id === 'onboard-academic') {
@@ -75,6 +77,7 @@ export default function App() {
             semesterEnd: phase.semesterEnd,
           })
         }}
+        onBack={() => setPhase({ id: 'onboard-academic' })}
       />
     )
   }
@@ -103,6 +106,7 @@ export default function App() {
             semesterEnd: phase.semesterEnd,
           })
         }}
+        onBack={() => setPhase({ id: 'onboard-schedule', semesterStart: phase.semesterStart, semesterEnd: phase.semesterEnd })}
       />
     )
   }
@@ -137,6 +141,7 @@ export default function App() {
           saveData(data)
           setPhase({ id: 'home', data })
         }}
+        onBack={() => setPhase({ id: 'onboard-rules', slots: phase.slots, semesterStart: phase.semesterStart, semesterEnd: phase.semesterEnd })}
       />
     )
   }

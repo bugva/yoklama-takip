@@ -8,6 +8,10 @@ export type Course = {
   limitValue: number
   /** Yüzde limiti için dönemlik toplam saat */
   totalHoursForPercent?: number
+  /** GPA Hesaplayıcı: Kredi değeri */
+  credits?: number
+  /** GPA Hesaplayıcı: Harf Notu (AA, BA, vb.) */
+  letterGrade?: string
 }
 
 export type ScheduleSlot = {

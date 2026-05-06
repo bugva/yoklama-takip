@@ -17,7 +17,7 @@ import { AddExtraLessonModal } from './AddExtraLessonModal'
 import { t, type MsgKey } from '../i18n'
 import { findCourseByName, sameCourseName, uniqueCourseNamesFromSlots } from '../logic/coursesFromSchedule'
 import { calendarSlotStateOnDate, displayAttendanceStateForCalendar, upsertAttendanceForSlotDay } from '../logic/absenceRecords'
-import { readClassPromptAnswer, writeClassPromptAnswer } from '../logic/classPrompt'
+import { readClassPromptAnswer, writeClassPromptAnswer, clearClassPromptAnswer } from '../logic/classPrompt'
 import { minutesSinceMidnight, toLocalYmd } from '../logic/dateUtils'
 import { ReportView } from './ReportView'
 import { findConflicts } from '../logic/conflicts'
@@ -142,6 +142,8 @@ export function Dashboard({
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
   const [updateReady, setUpdateReady] = useState(false)
   const [showReleaseNotes, setShowReleaseNotes] = useState(false)
+  const [riskBannerDismissed, setRiskBannerDismissed] = useState(false)
+  const [warnBannerDismissed, setWarnBannerDismissed] = useState(false)
   const [showDisco, setShowDisco] = useState(false)
   const [showUsageTutorial, setShowUsageTutorial] = useState(() => {
     if (!ENABLE_LIVE_USAGE_TUTORIAL) return false
@@ -469,6 +471,9 @@ export function Dashboard({
 
   function submitCalendarState(state: AttendanceState) {
     if (!calModal) return
+    const todayYmd = toLocalYmd(clock)
+    const targetYmd = toLocalYmd(calModal.date)
+    if (state === 'unsure' && targetYmd === todayYmd) return
     const course = findCourseByName(data.courses, calModal.slot.courseName)
     if (!course?.attendanceRequired) return
     const countsLimit = state === 'absent' || state === 'unsure'
@@ -680,9 +685,7 @@ export function Dashboard({
       })
     ) {
       if (source !== 'quick') pulseLowRemainingBannerForCalendar()
-      if (state === 'present' || state === 'absent' || state === 'unsure') {
-        writeClassPromptAnswer(slot.id, day, state === 'present' ? 'present' : state === 'absent' ? 'absent' : 'unsure')
-      }
+      writeClassPromptAnswer(slot.id, day, state === 'present' ? 'present' : state === 'absent' ? 'absent' : 'unsure')
       setClock(new Date())
     }
   }
@@ -691,7 +694,7 @@ export function Dashboard({
     const ymd = toLocalYmd(day)
     const nextAbsences = data.absences.filter((a) => !(a.slotId === slot.id && a.sessionDate === ymd))
     onUpdateData({ ...data, absences: nextAbsences })
-    writeClassPromptAnswer(slot.id, day, 'dismissed')
+    clearClassPromptAnswer(slot.id, day)
     setClock(new Date())
   }
 
@@ -703,21 +706,31 @@ export function Dashboard({
     }
 
     const current = calendarSlotStateOnDate(data.absences, slot, day, data.courses)
-    let next: AttendanceState | null
-    if (current === null || current === 'present' || current === 'cancelled') {
-      next = 'absent'
-    } else if (current === 'absent') {
-      next = 'unsure'
-    } else if (current === 'unsure') {
-      next = null
+
+    if (source === 'quick') {
+      // Bugün: boş/yeşil(örtük) → gittim(açık) → gitmedim(kırmızı) → temizle
+      if (current === null || current === 'cancelled') {
+        quickSetStateForSlot(slot, day, 'present', source)
+      } else if (current === 'present') {
+        quickSetStateForSlot(slot, day, 'absent', source)
+      } else {
+        clearQuickStateForSlotDay(slot, day)
+      }
     } else {
-      next = null
+      const isToday = toLocalYmd(day) === todayYmd
+      // Haftalık/Aylık: bugünde "emin değilim" yok.
+      // Bugün: null → gittim → gitmedim → temizle
+      // Geçmiş: null → gittim → gitmedim → emin değilim → temizle
+      if (current === null || current === 'cancelled') {
+        quickSetStateForSlot(slot, day, 'present', source)
+      } else if (current === 'present') {
+        quickSetStateForSlot(slot, day, 'absent', source)
+      } else if (current === 'absent' && !isToday) {
+        quickSetStateForSlot(slot, day, 'unsure', source)
+      } else {
+        clearQuickStateForSlotDay(slot, day)
+      }
     }
-    if (next === null) {
-      clearQuickStateForSlotDay(slot, day)
-      return
-    }
-    quickSetStateForSlot(slot, day, next, source)
   }
 
   const backupText = lastAutoBackupAt ? new Date(lastAutoBackupAt).toLocaleString() : t('settings.backupNever')
@@ -844,19 +857,25 @@ export function Dashboard({
         </div>
       )}
 
-      {exhaustedCourses.length > 0 ? (
-        <div className="banner banner-risk" role="status">
+      {!riskBannerDismissed && exhaustedCourses.length > 0 ? (
+        <div className="banner banner-risk" role="status" style={{ position: 'relative' }}>
           {t('absence.exhaustedBanner')}
+          <button type="button" className="btn text sm banner-close-btn" onClick={() => setRiskBannerDismissed(true)} aria-label="Close" style={{ position: 'absolute', top: 4, right: 4, padding: '4px 8px' }}>
+            ✕
+          </button>
         </div>
-      ) : anyRisk ? (
-        <div className="banner banner-risk" role="status">
+      ) : !riskBannerDismissed && anyRisk ? (
+        <div className="banner banner-risk" role="status" style={{ position: 'relative' }}>
           {t('absence.riskBanner')}
+          <button type="button" className="btn text sm banner-close-btn" onClick={() => setRiskBannerDismissed(true)} aria-label="Close" style={{ position: 'absolute', top: 4, right: 4, padding: '4px 8px' }}>
+            ✕
+          </button>
         </div>
       ) : null}
 
-      {showLowRemainingBanner && (
-        <div className="banner banner-warn" role="status">
-          <p className="muted small" style={{ marginBottom: 8 }}>
+      {!warnBannerDismissed && showLowRemainingBanner && (
+        <div className="banner banner-warn" role="status" style={{ position: 'relative' }}>
+          <p className="muted small" style={{ marginBottom: 8, paddingRight: 24 }}>
             {t('absence.lowRemainingIntro')}
           </p>
           {lowRemainingCourses.map((c) => (
@@ -867,6 +886,9 @@ export function Dashboard({
               })}
             </p>
           ))}
+          <button type="button" className="btn text sm banner-close-btn" onClick={() => setWarnBannerDismissed(true)} aria-label="Close" style={{ position: 'absolute', top: 4, right: 4, padding: '4px 8px' }}>
+            ✕
+          </button>
         </div>
       )}
 
@@ -976,20 +998,19 @@ export function Dashboard({
               type="button"
               className={`btn sm ${showFilters ? 'primary' : 'secondary'}`}
               aria-pressed={showFilters}
-              onClick={() => setShowFilters((prev) => !prev)}
+              onClick={() => {
+                setShowFilters((prev) => {
+                  const next = !prev
+                  if (!next) {
+                    setCalendarCourseFilter(null)
+                    setCalendarFilters([])
+                  }
+                  return next
+                })
+              }}
             >
               {t('filter.toggle')}
             </button>
-            {calendarCourseFilter && (
-              <span className="filter-active-pill" role="status" title={calendarCourseFilter}>
-                {calendarCourseFilter.length > 24 ? `${calendarCourseFilter.slice(0, 23)}…` : calendarCourseFilter}
-              </span>
-            )}
-            {calendarFilters.map((f) => (
-              <span key={f} className="filter-active-pill" role="status">
-                {t(`filter.${f}` as MsgKey)}
-              </span>
-            ))}
           </div>
           {showFilters && (
             <>
@@ -1100,122 +1121,85 @@ export function Dashboard({
       )}
 
       {view === 'settings' && (
-        <section className="card settings-view">
-          <h2>{t('settings.title')}</h2>
-          <p className="muted small">{t('settings.lead')}</p>
-          <div className="settings-notif-block">
-            <p className="muted small">{t('settings.themeLabel')}</p>
-            <div className="settings-segment">
-              <button
-                type="button"
-                className={`settings-segment-btn ${theme === 'dark' ? 'active' : ''}`}
-                onClick={() => setTheme('dark')}
-              >
-                {t('settings.themeDark')}
-              </button>
-              <button
-                type="button"
-                className={`settings-segment-btn ${theme === 'light' ? 'active' : ''}`}
-                onClick={() => setTheme('light')}
-              >
-                {t('settings.themeLight')}
-              </button>
+        <section className="stg">
+          <h2 className="stg-title">{t('settings.title')}</h2>
+          <p className="stg-lead">{t('settings.lead')}</p>
+
+          <div className="card stg-card">
+            <div className="stg-row">
+              <span className="stg-row-label">{t('settings.themeLabel')}</span>
+              <div className="settings-segment">
+                <button type="button" className={`settings-segment-btn ${theme === 'dark' ? 'active' : ''}`} onClick={() => setTheme('dark')}>{t('settings.themeDark')}</button>
+                <button type="button" className={`settings-segment-btn ${theme === 'light' ? 'active' : ''}`} onClick={() => setTheme('light')}>{t('settings.themeLight')}</button>
+              </div>
+            </div>
+            <div className="stg-row">
+              <span className="stg-row-label">{t('settings.langLabel')}</span>
+              <div className="settings-segment">
+                <button type="button" className={`settings-segment-btn ${lang === 'tr' ? 'active' : ''}`} onClick={() => setLang('tr')}>Türkçe</button>
+                <button type="button" className={`settings-segment-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => setLang('en')}>English</button>
+              </div>
+            </div>
+            <div className="stg-row stg-row--col">
+              <div className="stg-row-top">
+                <span className="stg-row-label">{t('settings.tapModeLabel')}</span>
+                <div className="settings-segment">
+                  <button type="button" className={`settings-segment-btn ${quickTapEnabled ? 'active' : ''}`} onClick={() => setQuickTapEnabled(true)}>{t('settings.tapModeOn')}</button>
+                  <button type="button" className={`settings-segment-btn ${quickTapEnabled ? '' : 'active'}`} onClick={() => setQuickTapEnabled(false)}>{t('settings.tapModeOff')}</button>
+                </div>
+              </div>
+              <p className="stg-hint">{t('settings.tapModeHint')}</p>
+              {quickTapEnabled && <p className="stg-hint">{t('settings.tapModeLongPressHint')}</p>}
             </div>
           </div>
-          <div className="settings-notif-block">
-            <p className="muted small">{t('settings.langLabel')}</p>
-            <div className="settings-segment">
-              <button
-                type="button"
-                className={`settings-segment-btn ${lang === 'tr' ? 'active' : ''}`}
-                onClick={() => setLang('tr')}
-              >
-                Turkce
-              </button>
-              <button
-                type="button"
-                className={`settings-segment-btn ${lang === 'en' ? 'active' : ''}`}
-                onClick={() => setLang('en')}
-              >
-                English
-              </button>
-            </div>
-          </div>
-          <div className="settings-notif-block">
-            <p className="muted small">{t('settings.tapModeLabel')}</p>
-            <div className="settings-segment">
-              <button
-                type="button"
-                className={`settings-segment-btn ${quickTapEnabled ? 'active' : ''}`}
-                onClick={() => setQuickTapEnabled(true)}
-              >
-                {t('settings.tapModeOn')}
-              </button>
-              <button
-                type="button"
-                className={`settings-segment-btn ${quickTapEnabled ? '' : 'active'}`}
-                onClick={() => setQuickTapEnabled(false)}
-              >
-                {t('settings.tapModeOff')}
-              </button>
-            </div>
-            <p className="muted small" style={{ marginTop: 8 }}>
-              {t('settings.tapModeHint')}
-            </p>
-            {quickTapEnabled ? (
-              <p className="muted small" style={{ marginTop: 6 }}>
-                {t('settings.tapModeLongPressHint')}
-              </p>
-            ) : null}
-          </div>
-          <div className="settings-notif-block">
-            <p className="muted small">{t('settings.dataLead')}</p>
-            <div className="btn-row wrap" style={{ marginTop: 10 }}>
-              <button type="button" className="btn secondary" onClick={onExportData}>
-                {t('footer.export')}
-              </button>
-              <button type="button" className="btn secondary" onClick={() => importInputRef.current?.click()}>
-                {t('footer.import')}
-              </button>
-              <button
-                type="button"
-                className="btn secondary"
-                onClick={() => {
-                  if (!onRestoreAutoBackup()) window.alert(t('settings.backupMissing'))
-                }}
-              >
-                {t('settings.backupRestore')}
-              </button>
-              <button type="button" className="btn text danger" onClick={() => setResetConfirmOpen(true)}>
-                {t('footer.reset')}
-              </button>
-            </div>
-            <p className="muted small">{t('settings.backupLast', { at: backupText })}</p>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json"
-              className="sr-only"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (!f) return
-                f.text().then((text) => onImportDataText(text))
-                e.currentTarget.value = ''
-              }}
-            />
-          </div>
-          <div className="settings-actions">
-            <button type="button" className="btn secondary" onClick={() => setShowExtra(true)}>
-              {t('dashboard.addExtra')}
+
+          <p className="stg-section-label">{t('settings.dataLead')}</p>
+          <div className="card stg-card">
+            <button type="button" className="stg-list-btn" onClick={onExportData}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span>{t('footer.export')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
-            <button type="button" className="btn secondary" onClick={onEditProgram}>
-              {t('dashboard.editProgram')}
+            <button type="button" className="stg-list-btn" onClick={() => importInputRef.current?.click()}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>{t('footer.import')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
-            <button type="button" className="btn secondary" onClick={onEditRules}>
-              {t('dashboard.editRules')}
+            <button type="button" className="stg-list-btn" onClick={() => { if (!onRestoreAutoBackup()) window.alert(t('settings.backupMissing')) }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              <span>{t('settings.backupRestore')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
-            <button type="button" className="btn secondary" onClick={onEditSemester}>
-              {t('dashboard.editSemester')}
+            <button type="button" className="stg-list-btn stg-list-btn--danger" onClick={() => setResetConfirmOpen(true)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span>{t('footer.reset')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+          <p className="stg-footnote">{t('settings.backupLast', { at: backupText })}</p>
+          <input ref={importInputRef} type="file" accept="application/json" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; f.text().then((text) => onImportDataText(text)); e.currentTarget.value = '' }} />
+
+          <p className="stg-section-label">{t('dashboard.editProgram')}</p>
+          <div className="card stg-card">
+            <button type="button" className="stg-list-btn" onClick={() => setShowExtra(true)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>{t('dashboard.addExtra')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button type="button" className="stg-list-btn" onClick={onEditProgram}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              <span>{t('dashboard.editProgram')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button type="button" className="stg-list-btn" onClick={onEditRules}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span>{t('dashboard.editRules')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button type="button" className="stg-list-btn" onClick={onEditSemester}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>{t('dashboard.editSemester')}</span>
+              <svg className="stg-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
         </section>
@@ -1326,7 +1310,12 @@ export function Dashboard({
                 <span className="instant-icon">✗</span>
                 <span className="instant-label">{t('absence.calendarStateAbsent')}</span>
               </button>
-              <button type="button" className="instant-btn instant-unsure" onClick={() => submitCalendarState('unsure')}>
+              <button
+                type="button"
+                className="instant-btn instant-unsure"
+                onClick={() => submitCalendarState('unsure')}
+                disabled={toLocalYmd(calModal.date) === toLocalYmd(clock)}
+              >
                 <span className="instant-icon">?</span>
                 <span className="instant-label">{t('absence.calendarStateUnsure')}</span>
               </button>

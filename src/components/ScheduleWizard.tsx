@@ -5,6 +5,7 @@ import { t, WEEKDAY_SHORT } from '../i18n'
 import { LanguageToggle } from './LanguageToggle'
 import { defaultSlotEnd, gridSlotStarts, isStandardGridSlot } from '../logic/scheduleGrid'
 import { courseHue } from '../logic/courseAccent'
+import { parseIcs } from '../logic/icsParser'
 
 type Props = {
   initialSlots: ScheduleSlot[]
@@ -13,6 +14,7 @@ type Props = {
   semesterEnd?: string
   onComplete: (slots: ScheduleSlot[]) => void
   onCancel?: () => void
+  onBack?: () => void
 }
 
 const SLOT_STARTS = gridSlotStarts()
@@ -51,8 +53,9 @@ function sameCourseName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase()
 }
 
-export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onComplete, onCancel }: Props) {
+export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onComplete, onCancel, onBack }: Props) {
   const [slots, setSlots] = useState<ScheduleSlot[]>(initialSlots)
+  const icsInputRef = useRef<HTMLInputElement>(null)
   /** Yerleştirme modunda aktif ders adı */
   const [placementCourse, setPlacementCourse] = useState<string | null>(null)
   /** Ders ekle modalı */
@@ -137,6 +140,32 @@ export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onCom
     setPlacementEditHint(false)
   }
 
+  function handleIcsImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const text = event.target?.result as string
+      if (!text) return
+      const importedSlots = parseIcs(text)
+      if (importedSlots.length > 0) {
+        setSlots((prev) => {
+          const combined = [...prev, ...importedSlots]
+          // Optional: we could deduplicate exact same slots, but parseIcs already tries to deduplicate.
+          return combined
+        })
+        window.alert(t('schedule.importIcsSuccess', { count: importedSlots.length }) + '\n\n' + t('schedule.importIcsHint'))
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = '' // reset
+  }
+
+  function renameCourse(oldName: string, newName: string) {
+    setSlots((prev) => prev.map((s) => (s.courseName === oldName ? { ...s, courseName: newName } : s)))
+    setPlacementCourse(newName)
+  }
+
   function handleGridCell(dayOfWeek: number, startTime: string) {
     const existing = findGridSlot(dayOfWeek, startTime)
     const end = defaultSlotEnd(SLOT_STARTS, startTime)
@@ -164,7 +193,15 @@ export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onCom
     }
 
     if (existing) {
-      setPlacementCourse(existing.courseName)
+      const newName = window.prompt(t('schedule.renamePrompt'), existing.courseName)
+      let finalName = existing.courseName
+
+      if (newName !== null && newName.trim() && newName.trim() !== existing.courseName) {
+        finalName = newName.trim()
+        renameCourse(existing.courseName, finalName)
+      }
+
+      setPlacementCourse(finalName)
       setPlacementEditHint(true)
       setPlacementTouched(false)
       setShowPlacementIdleHint(false)
@@ -221,6 +258,11 @@ export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onCom
   return (
     <div className="screen schedule-screen schedule-screen--sticky">
       <div className="screen-top-bar">
+        {onBack && (
+          <button type="button" className="btn secondary sm" onClick={onBack}>
+            {t('app.back')}
+          </button>
+        )}
         <LanguageToggle />
       </div>
       {onCancel && (
@@ -232,10 +274,25 @@ export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onCom
       <h1>{t('schedule.title')}</h1>
       <p className="lead">{t('schedule.lead')}</p>
       {!showSetupGuide && (
-        <div className="schedule-guide-open-row">
+        <div className="schedule-guide-open-row" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button type="button" className="btn text sm" onClick={() => setShowSetupGuide(true)}>
             {t('schedule.openSetupGuide')}
           </button>
+          <button type="button" className="btn secondary sm" onClick={() => icsInputRef.current?.click()}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {t('schedule.importIcs')}
+          </button>
+          <input
+            type="file"
+            accept=".ics"
+            className="sr-only"
+            ref={icsInputRef}
+            onChange={handleIcsImport}
+          />
         </div>
       )}
 
@@ -266,7 +323,22 @@ export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onCom
 
       {placementCourse && (
         <div className="placement-banner card">
-          <p className="placement-banner-text">{t('schedule.placingBanner', { name: placementCourse })}</p>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <p className="placement-banner-text">{t('schedule.placingBanner', { name: placementCourse })}</p>
+            <button
+              type="button"
+              className="btn secondary sm"
+              style={{ flexShrink: 0 }}
+              onClick={() => {
+                const newName = window.prompt(t('schedule.renamePrompt'), placementCourse)
+                if (newName && newName.trim() && newName.trim() !== placementCourse) {
+                  renameCourse(placementCourse, newName.trim())
+                }
+              }}
+            >
+              ✏️ {t('schedule.renameBtn')}
+            </button>
+          </div>
           <p className="muted small placement-banner-barhint">{t('schedule.donePlacingInBar')}</p>
         </div>
       )}
@@ -422,7 +494,7 @@ export function ScheduleWizard({ initialSlots, semesterStart, semesterEnd, onCom
               </label>
             </div>
 
-            <div className="btn-row">
+            <div className="btn-row wrap">
               <button type="button" className="btn primary" disabled={!canStartPlace} onClick={startPlacementFromModal}>
                 {t('schedule.startPlace')}
               </button>
