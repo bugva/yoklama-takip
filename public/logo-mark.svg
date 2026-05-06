@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="lm-bg" x1="48" y1="40" x2="464" y2="472" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6a68ea"/>
+      <stop offset="1" stop-color="#4341b8"/>
+    </linearGradient>
+    <linearGradient id="lm-shine" x1="160" y1="120" x2="320" y2="280" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#lm-bg)"/>
+  <rect x="40" y="40" width="432" height="432" rx="96" fill="url(#lm-shine)"/>
+  <!-- mini takvim sayfası -->
+  <rect x="132" y="128" width="248" height="200" rx="24" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.35)" stroke-width="10"/>
+  <rect x="132" y="128" width="248" height="56" rx="24" fill="rgba(255,255,255,0.2)"/>
+  <circle cx="196" cy="244" r="16" fill="rgba(255,255,255,0.35)"/>
+  <circle cx="256" cy="244" r="16" fill="rgba(255,255,255,0.35)"/>
+  <circle cx="316" cy="244" r="16" fill="rgba(255,255,255,0.35)"/>
+  <circle cx="196" cy="292" r="16" fill="rgba(255,255,255,0.28)"/>
+  <circle cx="256" cy="292" r="16" fill="rgba(255,255,255,0.45)"/>
+  <circle cx="316" cy="292" r="16" fill="rgba(255,255,255,0.28)"/>
+  <!-- onay işareti -->
+  <path
+    d="M148 312l72 72 160-168"
+    stroke="#ffffff"
+    stroke-width="40"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
