@@ -29,7 +29,7 @@ function n2l(n:number){if(n>=90)return'AA';if(n>=85)return'BA';if(n>=80)return'B
 function askN(msg:string,empty=false):number|null|''{const s=window.prompt(msg);if(s===null)return null;if(empty&&!s.trim())return'';const n=Number(s.replace(',','.'));if(isNaN(n)){window.alert('Sayı gir.');return askN(msg,empty)}return n}
 const E5=():GpaCourse[]=>Array.from({length:5},()=>({name:'',credit:3,grade:''}))
 function genTerms(yr:number,tm:1|2):GpaRecord[]{const out:GpaRecord[]=[];for(let y=1;y<=yr;y++){const mx=y===yr?tm-1:2;for(let t=1;t<=mx;t++)out.push({key:`${y}-${t}`,yearNum:y,term:t===1?'Güz':'Bahar',courses:E5()})}return out}
-function load(sc:string[]):Store{try{const r=localStorage.getItem(KEY);if(r){const s:Store=JSON.parse(r);const m=new Map(s.currentCourses.map(c=>[c.name,c]));return{prevSource:'manual',...s,currentCourses:sc.map(n=>m.get(n)??{name:n,credit:3,grade:''})}}}catch{}return{prevMode:'quick',prevSource:'manual',prevCredits:0,prevPoints:0,setupYear:null,setupTerm:1,prevRecords:[],currentCourses:sc.map(n=>({name:n,credit:3,grade:''}))}}
+function load(sc:string[]):Store{try{const r=localStorage.getItem(KEY);if(r){const s:Store=JSON.parse(r);const m=new Map(s.currentCourses.map(c=>[c.name,c]));return{...s,currentCourses:sc.map(n=>m.get(n)??{name:n,credit:3,grade:''})}}}catch{}return{prevMode:'quick',prevSource:'manual',prevCredits:0,prevPoints:0,setupYear:null,setupTerm:1,prevRecords:[],currentCourses:sc.map(n=>({name:n,credit:3,grade:''}))}}
 const gc=(v:number|null)=>v===null?'var(--muted)':v>=3.5?'#22d3a0':v>=3?'#4ade80':v>=2.5?'#facc15':v>=2?'#fb923c':'#f87171'
 const gl=(v:number|null)=>v===null?'':v>=3.5?'Mükemmel':v>=3?'İyi':v>=2.5?'Orta':v>=2?'Geçer':'Düşük'
 
